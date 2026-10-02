@@ -1,0 +1,32 @@
+{
+  "name": "contrato-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bot de Telegram con agente de IA que genera contratos de arrendamiento de vivienda urbana",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test src/**/*.test.ts",
+    "ejemplo": "tsx scripts/generar-ejemplo.ts",
+    "plantilla": "python3 scripts/build-template.py"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "docxtemplater": "^3.71.0",
+    "dotenv": "^18.0.5",
+    "grammy": "^1.46.0",
+    "pizzip": "^3.3.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

@@ -4,7 +4,7 @@ Genera templates/contrato-arrendamiento.docx a partir del texto del contrato ori
 Los campos variables usan la sintaxis de docxtemplater: {nombre_campo}.
 Cada placeholder queda dentro de un solo "run" para que docxtemplater lo reconozca.
 
-Uso:  python3 scripts/build-template.py
+Uso:  python3 scripts/build-template.py   (requiere: pip install python-docx)
 Tras generarla, la plantilla se puede editar a mano en Word sin problema,
 siempre que no se partan los {placeholders}.
 """
@@ -57,12 +57,12 @@ p("", "MARIO A. ROJAS RODELO, con domicilio en la ciudad de BOGOTÁ, identificad
 
 p("Primera. – Objeto: ",
   "Por medio del presente contrato, EL ARRENDADOR entrega a título de arrendamiento a EL "
-  "ARRENDATARIO el siguiente bien inmueble: Carrera 105 i 67 d 31 apto {apartamento}, destinado "
+  "ARRENDATARIO el siguiente bien inmueble: {inmueble_direccion}, destinado "
   "para el uso de vivienda para {ocupantes_texto}. LINDEROS: Se plasmarán en documento anexo que "
   "hará parte del contrato.")
 
 p("Segunda. – Canon de Arrendamiento: ",
-  "El canon de arrendamiento mensual es la suma de {canon_texto} M/cte, que EL ARRENDATARIO pagará "
+  "El canon de arrendamiento mensual es la suma de {precio_texto} M/cte, que EL ARRENDATARIO pagará "
   "anticipadamente al ARRENDADOR o a su orden, en el domicilio de EL ARRENDADOR ubicado en la "
   "Carrera 105 H 67 D 33, dentro de los primeros cinco (5) días de cada mes. Cada doce (12) meses el "
   "canon de arrendamiento será reajustado en el porcentaje máximo correspondiente al IPC del año "
@@ -71,6 +71,16 @@ p("Parágrafo 1: ",
   "La tolerancia de EL ARRENDADOR en recibir el pago del canon de arrendamiento con posterioridad "
   "al plazo indicado para ello en esta Cláusula no podrá entenderse, en ningún caso, como ánimo de "
   "EL ARRENDADOR de modificar el término establecido en este Contrato para el pago del canon.")
+# Párrafo condicional: docxtemplater (paragraphLoop) elimina los párrafos de apertura y cierre,
+# y omite el parágrafo completo cuando no se pactó depósito.
+p("", "{#hay_deposito}")
+p("Parágrafo 2: ",
+  "A la firma del presente Contrato, EL ARRENDATARIO entrega a EL ARRENDADOR la suma de "
+  "{deposito_texto} M/cte, a título de depósito, para cubrir los daños al inmueble, los servicios "
+  "públicos y demás obligaciones pendientes a cargo de EL ARRENDATARIO a la fecha de restitución del "
+  "Inmueble. El saldo, si lo hubiere, será devuelto a EL ARRENDATARIO una vez restituido el Inmueble "
+  "y verificado el pago de dichas obligaciones.")
+p("", "{/hay_deposito}")
 
 p("Tercera. – Vigencia: ",
   "El arrendamiento tendrá una duración de {duracion_texto}, contados a partir del "

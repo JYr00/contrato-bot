@@ -30,20 +30,24 @@ export function construirContexto(d: DatosContrato, arrendador: DatosArrendador)
     ? formatoMiles(Number(d.arrendatario_numero_documento))
     : d.arrendatario_numero_documento;
 
+  const blanco = (v: string) => v || '________________';
+
   return {
     arrendatario_nombre: d.arrendatario_nombre,
     arrendatario_identificacion: `${TIPOS_DOCUMENTO[d.arrendatario_tipo_documento]} No. ${numeroDoc}`,
     arrendatario_documento_firma: `${ABREVIATURA_DOCUMENTO[d.arrendatario_tipo_documento]} ${numeroDoc}`,
-    apartamento: d.apartamento,
+    inmueble_direccion: d.inmueble_direccion,
     ocupantes_texto: cantidad(d.numero_ocupantes, 'persona', 'personas', true),
-    canon_texto: pesosALetras(d.canon_mensual),
+    precio_texto: pesosALetras(d.precio_mensual),
+    hay_deposito: d.deposito > 0,
+    deposito_texto: d.deposito > 0 ? pesosALetras(d.deposito) : '',
     duracion_texto: cantidad(d.duracion_meses, 'mes', 'meses'),
     fecha_inicio_texto: fechaALetras(d.fecha_inicio),
     arrendatario_direccion: d.arrendatario_direccion,
-    arrendatario_correo: d.arrendatario_correo,
-    arrendatario_celular: d.arrendatario_celular,
-    arrendador_correo: arrendador.correo || '________________',
-    arrendador_celular: arrendador.celular || '________________',
+    arrendatario_correo: blanco(d.arrendatario_correo),
+    arrendatario_celular: blanco(d.arrendatario_celular),
+    arrendador_correo: blanco(arrendador.correo),
+    arrendador_celular: blanco(arrendador.celular),
     ejemplares_texto: cantidad(d.numero_ejemplares, 'ejemplar', 'ejemplares').replace(/ ejemplar(es)?$/, ''),
   };
 }
@@ -95,7 +99,7 @@ export class ContractRenderer {
     const docx = this.renderDocx(datos);
     const pdf = await this.docxAPdf(docx);
     const apellido = datos.arrendatario_nombre.split(' ').slice(-2).join('_');
-    const nombreBase = `Contrato_Arrendamiento_Apto${datos.apartamento}_${apellido}`.replace(/[^\wÁÉÍÓÚÑáéíóúñ-]/g, '_');
+    const nombreBase = `Contrato_Arrendamiento_${apellido}_${datos.fecha_inicio}`.replace(/[^\wÁÉÍÓÚÑáéíóúñ-]/g, '_');
     return { nombreBase, docx, pdf };
   }
 }

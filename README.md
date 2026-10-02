@@ -1,26 +1,38 @@
 # contrato-bot
 
-Bot de Telegram con un agente de IA (API de Claude) que conversa con el arrendatario, recoge los datos del
-contrato de arrendamiento de vivienda urbana (Carrera 105 i 67 d 31) y le devuelve el contrato lleno en PDF y Word.
+Bot de Telegram para que el arrendador cree contratos de arrendamiento de vivienda urbana desde el chat:
+envía la foto de la cédula del arrendatario, elige con botones el inmueble, el precio, el canon y la duración,
+y recibe el contrato listo en PDF y Word.
 
 ## Cómo funciona
 
 ```
-Telegram ──► grammY ──► ContratoAgent ──► Claude (tool use)
-                             │
-                             ├─ registrar_datos   → valida con zod y guarda en la sesión
-                             └─ generar_contrato  → docxtemplater + LibreOffice → .docx / .pdf
+📷 Foto de la cédula ──► Claude (visión) lee nombre y número ──► ✅ confirmar
+                                                                    │
+           ┌────────────── ¿hay contratos anteriores? ──────────────┤
+           ▼ sí                                                     ▼ no
+  💡 Sugerencia completa                              Paso a paso con botones:
+  [Usar sugerencia] [Paso a paso]                     🏠 Inmueble   [Dir. 1] [Dir. 2] [➕ Otra]
+           │                                          💰 Precio     [$1.5M] [$1.3M] [➕ Otro]
+           │                                          🔐 Canon      [$500k] [Sin canon] [➕ Otro]
+           │                                          📅 Duración   [3 meses] [6 meses] [➕ Otro]
+           │                                          🗓️ Inicio     [Hoy] [1 del próximo mes] [➕ Otra]
+           │                                          👥 Ocupantes, 📱 celular, ✉️ correo, 📬 notificación
+           └──────────────────────────► 📄 Resumen [✅ Generar] [✏️ Corregir] [❌ Cancelar]
 ```
 
-- **El texto del contrato es fijo.** Vive en `templates/contrato-arrendamiento.docx`. El LLM nunca redacta
-  cláusulas: solo extrae datos de la conversación y llama herramientas.
-- **Todo dato pasa por validación** (`src/contract/schema.ts`): cédula, celular colombiano, correo, fechas
-  reales, rangos razonables de canon. Si algo falla, el agente le pide al usuario que lo corrija.
-- **Valores en letras deterministas** (`numero-a-letras.ts`): "UN MILLÓN QUINIENTOS MIL PESOS ($1.500.000)",
-  "doce (12) meses", "dos (2) personas". No dependen del modelo.
-- **Confirmación obligatoria:** el agente muestra un resumen y solo genera cuando el usuario confirma.
-- **Habeas data:** antes de pedir datos, el bot solicita autorización (Ley 1581 de 2012).
-- **Copia al arrendador:** si configuras `ARRENDADOR_CHAT_ID`, cada contrato generado le llega también a él.
+- **Precio** es el arriendo mensual; **canon** es el depósito que se paga una sola vez al inicio. Si no hay
+  canon, el parágrafo del depósito no aparece en el contrato.
+- **Aprende de lo que usas.** Cada dirección nueva se guarda al escribirla, y al generar un contrato se guardan
+  precio, canon, duración y los datos del arrendatario (`data/catalogo.json`). Los botones muestran primero lo
+  más reciente; el precio sugerido es el último usado en ese inmueble.
+- **Arrendatario conocido:** si la cédula ya tuvo un contrato, se sugieren su celular, correo y ocupantes.
+- **Sin "otro valor" obligatorio:** en cualquier paso se puede escribir directamente ("1,5 millones",
+  "un año", "15 de noviembre"). Los textos se interpretan con código determinista (`src/flujo/interpretar.ts`)
+  y todo dato pasa por la validación de `src/contract/schema.ts`.
+- **Claude solo lee la foto.** El texto del contrato es fijo (`templates/contrato-arrendamiento.docx`) y los
+  valores en letras los calcula `numero-a-letras.ts`.
+- **Bot privado:** solo responde a los IDs de `USUARIOS_AUTORIZADOS`. A cualquier otro le dice su ID.
 
 ## Puesta en marcha
 
@@ -28,26 +40,27 @@ Requisitos: Node 20+, y LibreOffice para generar el PDF (sin él, el bot envía 
 
 ```bash
 npm install
-cp .env.example .env      # completa TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY y los datos del arrendador
+cp .env.example .env      # completa TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY y USUARIOS_AUTORIZADOS
 npm run dev               # long polling, recarga al guardar
 ```
 
-Comandos del bot: `/start`, `/nuevo`, `/cancelar`.
+Comandos del bot: `/nuevo`, `/cancelar`. También basta con enviar la foto de una cédula para empezar.
 
 Otros scripts:
 
 | Script | Qué hace |
 |---|---|
-| `npm test` | Pruebas de validación, letras y del ciclo del agente con un cliente simulado |
+| `npm test` | Pruebas de validación, letras, interpretación de textos y del flujo completo con botones |
 | `npm run ejemplo` | Genera un contrato con datos ficticios en `out/` (sin Telegram ni API) |
-| `npm run plantilla` | Regenera la plantilla Word desde `scripts/build-template.py` |
+| `npm run plantilla` | Regenera la plantilla Word desde `scripts/build-template.py` (requiere `pip install python-docx`) |
 | `npm run build && npm start` | Compila y ejecuta en producción |
 
 ## Cambiar el contrato
 
 Abre `templates/contrato-arrendamiento.docx` en Word y edítalo como cualquier documento. Los campos variables
 están entre llaves, por ejemplo `{canon_texto}`; no partas una llave con formatos distintos. Para agregar un
-campo nuevo: añádelo en `schema.ts` (validación + descripción) y en `construirContexto` de `render.ts`.
+campo nuevo: añádelo en `schema.ts` (validación + etiqueta), en `construirContexto` de `render.ts` y, si se
+debe preguntar, en `ORDEN` y `PREGUNTAS` de `src/flujo/asistente.ts`.
 
 ## Despliegue
 
@@ -67,8 +80,11 @@ CMD ["npm", "start"]
 
 ## Pendiente para producción
 
-- Cambiar `InMemorySessionStore` por Redis o PostgreSQL (implementa la interfaz `SessionStore`); hoy las
-  sesiones se pierden al reiniciar.
+- Cambiar `InMemorySessionStore` por Redis o PostgreSQL (implementa la interfaz `SessionStore`); hoy un
+  contrato a medio llenar se pierde al reiniciar (el catálogo sí persiste en `data/`).
+- Respaldar `data/catalogo.json`: contiene datos personales de arrendatarios.
+- El canon como depósito: la Ley 820 de 2003 (art. 16) prohíbe exigir depósitos en dinero en vivienda
+  urbana; validarlo con un abogado.
 - Pasar de long polling a webhook si se despliega en un servicio serverless.
 - Política de tratamiento de datos publicada (enlace en el mensaje de autorización) y retención de contratos.
 - Revisión de la plantilla por un abogado.

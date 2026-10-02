@@ -7,10 +7,18 @@ const esquema = z.object({
   ANTHROPIC_MODEL: z.string().default('claude-sonnet-5-5'),
   ARRENDADOR_CORREO: z.string().default(''),
   ARRENDADOR_CELULAR: z.string().default(''),
-  ARRENDADOR_CHAT_ID: z
+  /** IDs de Telegram (separados por coma) que pueden usar el bot. Vacío = nadie, el bot responde con el ID. */
+  USUARIOS_AUTORIZADOS: z
     .string()
-    .optional()
-    .transform((v) => (v ? Number(v) : undefined)),
+    .default('')
+    .transform((v) =>
+      v
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map(Number),
+    ),
+  CATALOGO_PATH: z.string().default('data/catalogo.json'),
   SOFFICE_PATH: z.string().default('soffice'),
   PLANTILLA_PATH: z.string().default('templates/contrato-arrendamiento.docx'),
 });

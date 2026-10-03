@@ -146,11 +146,11 @@ volumen para que sobreviva a reinicios y reconstrucciones, y respáldala.
 docker run -d --restart unless-stopped --env-file .env -v "$PWD/data:/app/data" contrato-bot
 ```
 
-## Pendiente para producción
+## Pendiente
 
-- Cambiar `InMemorySessionStore` por Redis o PostgreSQL (implementa la interfaz `SessionStore`); hoy un
-  contrato a medio llenar se pierde al reiniciar (el catálogo sí persiste en `data/`).
-- Respaldar `data/catalogo.json`: contiene datos personales de arrendatarios.
+- Guardar en disco el contrato a medio llenar (`SessionStore` en un JSON en `data/`; con tan pocos usuarios no
+  hace falta Redis ni PostgreSQL): hoy se pierde si el bot se reinicia. El catálogo sí persiste en `data/`.
+- Guardar los respaldos que llegan por Telegram: `data/` contiene datos personales de arrendatarios.
 - El depósito: la Ley 820 de 2003 (art. 16) prohíbe exigir depósitos en dinero en vivienda
   urbana; validarlo con un abogado.
 - Pasar de long polling a webhook si se despliega en un servicio serverless.

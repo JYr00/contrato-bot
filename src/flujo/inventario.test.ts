@@ -94,11 +94,14 @@ test('informe general, edificio y libres', async () => {
 
   const libres = inv.libres();
   assert.deepEqual(etiquetas(libres), [
-    ['🟢 301 · Carrera 105 i 67 d 31'],
-    ['🟢 302 · Carrera 105 i 67 d 31'],
+    ['🏢 Carrera 105 i 67 d 31 · 2 libres'],
+    ['301', '302'],
     ['↩️ Inmuebles'],
   ]);
+  assert.match(libres.texto, /^🟢 Libres hoy: 2 en 1 edificio/);
   assert.match(libres.texto, /Se desocupan pronto \(sin renovar\):\n🟡 202/);
+  assert.equal(data(libres, 'Carrera 105'), 'inv:e:1', 'el encabezado abre el edificio');
+  assert.equal(data(libres, '302'), 'inv:u:1:3');
 });
 
 test('detalle de un apartamento y sus acciones', async () => {

@@ -143,29 +143,44 @@ export class Inventario {
     };
   }
 
-  /** Apartamentos libres de todos los edificios, y los que se desocupan pronto. */
+  /**
+   * Apartamentos libres agrupados por edificio: un botón de encabezado por edificio (abre su vista) y debajo
+   * solo los números, en filas de 4. Al final, los que se desocupan pronto sin renovar.
+   */
   libres(): Mensaje {
     const hoy = this.hoy();
-    const libres: Boton[][] = [];
+    const botones: Boton[][] = [];
     const pronto: string[] = [];
+    let total = 0;
+    let edificios = 0;
+
     this.catalogo.edificiosOrdenados().forEach((edificio, i) => {
+      const sinCiudad = edificio.split(',')[0]!;
+      const libres: Boton[] = [];
       this.catalogo.inmueblesDe(edificio).forEach((direccion, j) => {
         const e = estadoInmueble(this.catalogo.contratosDe(direccion), hoy);
-        // En el botón basta la dirección sin la ciudad.
-        const sinCiudad = edificio.split(',')[0]!;
-        const corto = sinCiudad.length > 30 ? `${sinCiudad.slice(0, 29)}…` : sinCiudad;
-        if (e.tipo === 'libre') libres.push([{ texto: `${EMOJI.libre} ${etiquetaUnidad(direccion)} · ${corto}`, data: `inv:u:${i}:${j}` }]);
-        if (e.tipo === 'por_vencer' && !e.siguiente) pronto.push(`${EMOJI.por_vencer} ${etiquetaUnidad(direccion)} · ${corto} · ${fechaCorta(e.fin!)}`);
+        if (e.tipo === 'libre') libres.push({ texto: etiquetaUnidad(direccion), data: `inv:u:${i}:${j}` });
+        if (e.tipo === 'por_vencer' && !e.siguiente) {
+          pronto.push(`${EMOJI.por_vencer} ${etiquetaUnidad(direccion)} · ${sinCiudad} · ${fechaCorta(e.fin!)}`);
+        }
       });
+      if (!libres.length) return;
+      total += libres.length;
+      edificios++;
+      botones.push([{ texto: `🏢 ${sinCiudad} · ${libres.length} libre${libres.length === 1 ? '' : 's'}`, data: `inv:e:${i}` }]);
+      for (let k = 0; k < libres.length; k += 4) botones.push(libres.slice(k, k + 4));
     });
+
     const texto = [
-      `${EMOJI.libre} Inmuebles libres hoy: ${libres.length}`,
-      libres.length ? 'Toca uno para ver el detalle o hacer un contrato.' : 'No hay inmuebles libres.',
+      total
+        ? `${EMOJI.libre} Libres hoy: ${total} en ${edificios} edificio${edificios === 1 ? '' : 's'}`
+        : `${EMOJI.libre} No hay inmuebles libres hoy.`,
       pronto.length ? `Se desocupan pronto (sin renovar):\n${pronto.join('\n')}` : '',
+      total ? 'Toca un apartamento para ver el detalle o hacer un contrato.' : '',
     ];
     return {
       texto: texto.filter(Boolean).join('\n\n'),
-      botones: [...libres, [{ texto: '↩️ Inmuebles', data: 'inv:inicio' }]],
+      botones: [...botones, [{ texto: '↩️ Inmuebles', data: 'inv:inicio' }]],
     };
   }
 

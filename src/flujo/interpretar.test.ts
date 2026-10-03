@@ -12,6 +12,7 @@ import {
   componerDireccion,
   interpretarUnidad,
   separarUnidad,
+  senalesDeDatos,
 } from './interpretar.js';
 
 test('pesos escritos de varias formas', () => {
@@ -94,4 +95,15 @@ test('edificio y apartamento', () => {
   assert.equal(interpretarUnidad('apto 501'), '501');
   assert.equal(interpretarUnidad('501'), '501');
   assert.equal(interpretarUnidad('casa'), '');
+});
+
+test('detecta mensajes con varios datos', () => {
+  assert.equal(senalesDeDatos('750 mil'), 1);
+  assert.equal(senalesDeDatos('Carrera 105 i 67 d 31 apto 501'), 1);
+  assert.equal(senalesDeDatos('310 555 1234 laura@x.com'), 0);
+  assert.equal(senalesDeDatos('1 millón 200 mil'), 1);
+  assert.equal(senalesDeDatos('15 de octubre'), 1);
+  assert.equal(senalesDeDatos('apto 501, 750 mil, 200 de canon, 3 meses desde el 15'), 5);
+  assert.equal(senalesDeDatos('3 meses desde el 15'), 2);
+  assert.equal(senalesDeDatos('Laura Gómez CC 1020345678'), 0);
 });

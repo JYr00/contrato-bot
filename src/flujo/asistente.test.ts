@@ -6,7 +6,7 @@ import PizZip from 'pizzip';
 
 import { ContractRenderer } from '../contract/render.js';
 import { Catalogo } from '../datos/catalogo.js';
-import { Asistente, estadoInicial, type Salida } from './asistente.js';
+import { Asistente, estadoInicial, type ContextoExtraccion, type Salida } from './asistente.js';
 
 const HOY = '2026-10-02';
 const plantilla = await readFile('templates/contrato-arrendamiento.docx');
@@ -308,4 +308,106 @@ test('/renovar: lista contratos por vencimiento y el elegido va directo al resum
     '2026-10-15',
     'la renovación pasa a ser el último contrato',
   );
+});
+
+/** Extractor falso: devuelve lo guionizado para cada texto y registra el contexto recibido. */
+function extractorFalso(respuestas: Record<string, Record<string, unknown>>) {
+  const llamadas: { texto: string; contexto: ContextoExtraccion }[] = [];
+  return {
+    llamadas,
+    extractor: {
+      extraer: async (texto: string, contexto: ContextoExtraccion) => {
+        llamadas.push({ texto, contexto });
+        return respuestas[texto] ?? {};
+      },
+    },
+  };
+}
+
+test('mensaje libre: varios datos de una vez y solo se pregunta lo que falta', async () => {
+  const catalogo = Catalogo.enMemoria({ edificios: [{ direccion: 'Carrera 105 i 67 d 31, Bogotá', ultimoUso: 1 }] });
+  const { extractor, llamadas } = extractorFalso({
+    'apto 501, 750 mil, 200 de canon, 3 meses desde el 15': {
+      apartamento: '501',
+      precio_mensual: 750_000,
+      deposito: 200_000,
+      duracion_meses: 3,
+      fecha_inicio: '2026-10-15',
+    },
+    'cambia el precio a 800 mil': { precio_mensual: 800_000 },
+    'precio 50 y 2 personas': { precio_mensual: 50, numero_ocupantes: 2 },
+  });
+  const a = new Asistente(catalogo, () => HOY, extractor);
+  const e = estadoInicial();
+  a.iniciar(e);
+  await a.recibirTexto(e, 'Laura Gómez Pérez CC 1020345678');
+  assert.equal(e.paso, 'inmueble');
+
+  let s = await a.recibirTexto(e, 'apto 501, 750 mil, 200 de canon, 3 meses desde el 15');
+  assert.equal(llamadas.length, 1);
+  assert.deepEqual(llamadas[0]!.contexto.edificios, ['Carrera 105 i 67 d 31, Bogotá']);
+  assert.equal(e.datos.inmueble_direccion, 'Carrera 105 i 67 d 31 apto 501, Bogotá', 'el único edificio completa el apto');
+  assert.match(s.tarjeta.texto, /✍️ Entendí: inmueble, precio \(arriendo mensual\), canon \(depósito inicial\), duración, fecha de inicio\./);
+  assert.match(s.tarjeta.texto, /Del 15 de octubre de 2026 al 14 de enero de 2027/);
+  assert.equal(e.paso, 'ocupantes', 'salta a lo primero que falta');
+
+  // Un dato solo se interpreta localmente, sin llamar a Claude.
+  s = await a.recibirTexto(e, '2');
+  assert.equal(llamadas.length, 1);
+  s = await a.recibirBoton(e, boton(s, 'blanco'));
+  s = await a.recibirBoton(e, boton(s, 'La del inmueble'));
+  assert.equal(e.paso, 'resumen');
+
+  // Corrección escrita desde el resumen.
+  s = await a.recibirTexto(e, 'cambia el precio a 800 mil');
+  assert.equal(e.paso, 'resumen');
+  assert.equal(e.datos.precio_mensual, 800_000);
+  assert.match(s.tarjeta.texto, /✍️ Entendí: precio/);
+
+  // Lo inválido no se guarda y se avisa; lo válido sí.
+  s = await a.recibirTexto(e, 'precio 50 y 2 personas');
+  assert.equal(e.datos.precio_mensual, 800_000);
+  assert.match(s.tarjeta.texto, /⚠️ Precio \(arriendo mensual\): El precio parece demasiado bajo/);
+
+  // Si no entiende nada, responde como siempre.
+  s = await a.recibirTexto(e, 'hola');
+  assert.match(s.tarjeta.texto, /Usa los botones o escribe qué cambiar/);
+});
+
+test('mensaje libre al empezar: todo en un mensaje, incluso el arrendatario', async () => {
+  const { extractor } = extractorFalso({
+    'Laura Gómez CC 1020345678, Calle 80 # 12-34, 900 mil, 6 meses': {
+      arrendatario_nombre: 'Laura Gómez',
+      arrendatario_numero_documento: '1020345678',
+      inmueble_direccion: 'Calle 80 # 12-34',
+      precio_mensual: 900_000,
+      duracion_meses: 6,
+    },
+  });
+  const catalogo = Catalogo.enMemoria();
+  const a = new Asistente(catalogo, () => HOY, extractor);
+  const e = estadoInicial();
+  const s = await a.recibirTexto(e, 'Laura Gómez CC 1020345678, Calle 80 # 12-34, 900 mil, 6 meses');
+  assert.equal(s.nueva, true);
+  assert.equal(e.datos.arrendatario_nombre, 'LAURA GÓMEZ');
+  assert.equal(e.paso, 'unidad', 'edificio sin apartamento: falta preguntar cuál');
+  assert.deepEqual(catalogo.edificios(), ['Calle 80 # 12-34']);
+  assert.equal(e.datos.precio_mensual, 900_000);
+});
+
+test('mensaje libre: el apartamento queda en el formato de siempre aunque llegue después de la ciudad', async () => {
+  const { extractor } = extractorFalso({
+    'el de la 105 apto 302 a 1.2 millones por un año': {
+      inmueble_direccion: 'Carrera 105 i 67 d 31, Bogotá apto 302',
+      precio_mensual: 1_200_000,
+      duracion_meses: 12,
+    },
+  });
+  const a = new Asistente(Catalogo.enMemoria(), () => HOY, extractor);
+  const e = estadoInicial();
+  a.iniciar(e);
+  await a.recibirTexto(e, 'Laura Gómez Pérez CC 1020345678');
+  await a.recibirTexto(e, 'el de la 105 apto 302 a 1.2 millones por un año');
+  assert.equal(e.datos.inmueble_direccion, 'Carrera 105 i 67 d 31 apto 302, Bogotá');
+  assert.equal(e.paso, 'deposito');
 });

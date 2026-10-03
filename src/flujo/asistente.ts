@@ -1,6 +1,8 @@
 import { fechaALetras, formatoMiles } from '../contract/numero-a-letras.js';
 import {
   ABREVIATURA_DOCUMENTO,
+  CAMPOS,
+  ETIQUETAS,
   TIPOS_DOCUMENTO,
   VALORES_POR_DEFECTO,
   estaCompleto,
@@ -20,6 +22,7 @@ import {
   interpretarPesos,
   interpretarUnidad,
   primeroDelMesSiguiente,
+  senalesDeDatos,
   separarUnidad,
   sumarDias,
 } from './interpretar.js';
@@ -98,6 +101,22 @@ export interface Salida {
   generar?: DatosContrato;
   /** El botón pertenece a un paso anterior y se ignoró. */
   obsoleto?: boolean;
+}
+
+/** Datos que un mensaje libre puede traer; `apartamento` va solo cuando no se dijo el edificio. */
+export type DatosExtraidos = Partial<Record<CampoContrato, unknown>> & { apartamento?: string };
+
+export interface ContextoExtraccion {
+  hoy: string;
+  /** Edificios guardados, para reconocerlos aunque se escriban incompletos. */
+  edificios: string[];
+  /** Pregunta en pantalla cuando llegó el mensaje. */
+  pregunta?: string;
+}
+
+/** Interpreta un mensaje libre con varios datos (lo implementa Claude en src/ia/extractor-datos.ts). */
+export interface Extractor {
+  extraer(texto: string, contexto: ContextoExtraccion): Promise<DatosExtraidos>;
 }
 
 export function estadoInicial(): EstadoAsistente {
@@ -341,6 +360,8 @@ export class Asistente {
   constructor(
     private readonly catalogo: Catalogo,
     private readonly hoy: () => string,
+    /** Opcional: sin él, solo se entienden respuestas de un dato a la vez. */
+    private readonly extractor?: Extractor,
   ) {}
 
   iniciar(e: EstadoAsistente): Salida {
@@ -440,6 +461,11 @@ export class Asistente {
       case 'documento':
       case 'confirmar_documento': {
         const nueva = e.paso === 'inicio' || e.paso === 'listo' || e.paso === 'renovar';
+        if (senalesDeDatos(texto) >= 2) {
+          if (nueva) this.iniciar(e);
+          const libre = await this.interpretarLibre(e, texto);
+          if (libre) return { ...libre, nueva };
+        }
         const doc = interpretarDocumentoEscrito(texto);
         if (doc.nombre && doc.numero) {
           if (nueva) this.iniciar(e);
@@ -451,12 +477,18 @@ export class Asistente {
       case 'propuesta':
       case 'resumen':
       case 'corregir':
-        return this.actual(e, '👇 Usa los botones para continuar.');
+        // Correcciones escritas: "cambia el precio a 800 mil".
+        return (await this.interpretarLibre(e, texto)) ?? this.actual(e, '👇 Usa los botones o escribe qué cambiar.');
       default: {
         const paso = e.paso;
-        const valor = PREGUNTAS[paso].interpretar(texto, this.contexto(e));
-        if (!valor) return this.preguntar(e, paso, [`🤔 No entendí "${texto.slice(0, 60)}".`], true);
-        return this.aplicar(e, paso, valor);
+        // Varios datos en un mensaje: se interpretan todos. Uno solo: intérprete local, y Claude si no lo entiende.
+        const varios = senalesDeDatos(texto) >= 2;
+        const valor = varios ? null : PREGUNTAS[paso].interpretar(texto, this.contexto(e));
+        if (valor) return this.aplicar(e, paso, valor);
+        return (
+          (await this.interpretarLibre(e, texto)) ??
+          this.preguntar(e, paso, [`🤔 No entendí "${texto.slice(0, 60)}".`], true)
+        );
       }
     }
   }
@@ -562,6 +594,74 @@ export class Asistente {
   }
 
   /**
+   * Aplica los datos que el extractor encuentre en un mensaje libre. Devuelve null si no hay extractor o no
+   * entendió nada, para que quien llama responda como siempre.
+   */
+  private async interpretarLibre(e: EstadoAsistente, texto: string): Promise<Salida | null> {
+    if (!this.extractor) return null;
+    const pregunta = esPasoDato(e.paso) ? PREGUNTAS[e.paso] : undefined;
+    let extraidos: DatosExtraidos;
+    try {
+      extraidos = await this.extractor.extraer(texto, {
+        hoy: this.hoy(),
+        edificios: this.catalogo.edificios(10),
+        pregunta: pregunta && (typeof pregunta.pregunta === 'string' ? pregunta.pregunta : pregunta.titulo),
+      });
+    } catch (err) {
+      console.error('[asistente] Error interpretando mensaje libre:', err);
+      return null;
+    }
+
+    const { apartamento, ...campos } = extraidos;
+    const avisos: string[] = [];
+    if (apartamento && !campos.inmueble_direccion) {
+      const unico = this.catalogo.edificios(2);
+      const edificio = e.edificio ?? (unico.length === 1 ? unico[0] : undefined);
+      if (edificio) campos.inmueble_direccion = componerDireccion(edificio, String(apartamento));
+      else avisos.push(`🤔 ¿De qué edificio es el apto ${apartamento}?`);
+    }
+
+    const { guardados, errores } = validarParcial(campos);
+    for (const [campo, error] of Object.entries(errores)) {
+      avisos.push(`⚠️ ${ETIQUETAS[campo as CampoContrato]}: ${error}`);
+    }
+    if (!Object.keys(guardados).length && !avisos.length) return null;
+
+    // Aceptar la sugerencia y corregir encima: "sí, pero a 800 mil".
+    if (e.paso === 'propuesta' && e.propuesta) {
+      e.datos = { ...e.propuesta, ...e.datos };
+      e.propuesta = undefined;
+    }
+
+    // Edificio sin apartamento: se guarda y se pregunta el apartamento.
+    let faltaApartamento = false;
+    if (guardados.inmueble_direccion) {
+      const { base, unidad } = separarUnidad(guardados.inmueble_direccion);
+      e.edificio = base;
+      await this.catalogo.agregarEdificio(base);
+      if (unidad) {
+        // Mismo formato que con botones, aunque llegue "…, Bogotá apto 302".
+        guardados.inmueble_direccion = componerDireccion(base, unidad);
+        if (e.datos.arrendatario_direccion && e.datos.arrendatario_direccion === e.datos.inmueble_direccion) {
+          e.datos.arrendatario_direccion = guardados.inmueble_direccion;
+        }
+        await this.catalogo.agregarInmueble(guardados.inmueble_direccion);
+      } else {
+        delete guardados.inmueble_direccion;
+        faltaApartamento = true;
+      }
+    }
+
+    Object.assign(e.datos, guardados);
+    const entendidos = CAMPOS.filter((c) => c in guardados).map((c) => ETIQUETAS[c].toLowerCase());
+    if (entendidos.length) avisos.unshift(`✍️ Entendí: ${entendidos.join(', ')}.`);
+
+    if (faltaApartamento) return this.preguntar(e, 'unidad', avisos);
+    if (['resumen', 'corregir', 'propuesta'].includes(e.paso)) e.volverAResumen = true;
+    return this.avanzar(e, avisos);
+  }
+
+  /**
    * Contrato que continúa al anterior: mismos datos, empieza el día siguiente al vencimiento y sin canon
    * (ya se entregó). El precio se mantiene; los avisos recuerdan revisarlo.
    */
@@ -634,6 +734,10 @@ export class Asistente {
   }
 
   private avanzar(e: EstadoAsistente, avisos: string[] = []): Salida {
+    if (!e.datos.arrendatario_numero_documento || !e.datos.arrendatario_nombre) {
+      e.paso = 'documento';
+      return { tarjeta: this.tarjeta(e, PEDIR_DOCUMENTO, undefined, avisos) };
+    }
     if (e.volverAResumen) return this.resumen(e, avisos);
     const siguiente = ORDEN.find((p) => pendiente(e.datos, p));
     return siguiente ? this.preguntar(e, siguiente, avisos) : this.resumen(e, avisos);

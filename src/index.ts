@@ -7,6 +7,7 @@ import type { DatosContrato } from './contract/schema.js';
 import { Catalogo } from './datos/catalogo.js';
 import { Asistente, type Mensaje, type Salida } from './flujo/asistente.js';
 import { agregarDireccion, botonDirecciones, listaDirecciones } from './flujo/direcciones.js';
+import { ExtractorDatos } from './ia/extractor-datos.js';
 import { LectorDocumento, type TipoImagen } from './ia/lector-documento.js';
 import { InMemorySessionStore, type Session } from './session/store.js';
 
@@ -20,8 +21,9 @@ const renderer = await ContractRenderer.desdeArchivo(
 );
 const catalogo = await Catalogo.abrir(config.CATALOGO_PATH);
 const hoy = () => new Intl.DateTimeFormat('en-CA', { timeZone: ZONA_HORARIA }).format(new Date());
-const asistente = new Asistente(catalogo, hoy);
-const lector = new LectorDocumento(new Anthropic({ apiKey: config.ANTHROPIC_API_KEY }), config.ANTHROPIC_MODEL);
+const claude = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
+const asistente = new Asistente(catalogo, hoy, new ExtractorDatos(claude, config.ANTHROPIC_MODEL));
+const lector = new LectorDocumento(claude, config.ANTHROPIC_MODEL);
 const sesiones = new InMemorySessionStore();
 const bot = new Bot(config.TELEGRAM_BOT_TOKEN);
 
@@ -164,6 +166,7 @@ bot.on(['message:photo', 'message:document'], async (ctx) => {
 
 bot.on('message:text', async (ctx) => {
   const session = await sesiones.get(ctx.chat.id);
+  await ctx.replyWithChatAction('typing');
   await mostrar(ctx, session, await asistente.recibirTexto(session.estado, ctx.message.text));
 });
 

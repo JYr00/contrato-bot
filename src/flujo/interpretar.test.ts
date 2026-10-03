@@ -7,6 +7,8 @@ import {
   interpretarMeses,
   interpretarPesos,
   primeroDelMesSiguiente,
+  fechaFin,
+  interpretarContacto,
 } from './interpretar.js';
 
 test('pesos escritos de varias formas', () => {
@@ -62,4 +64,15 @@ test('documento escrito', () => {
     numero: '1020345678',
     nombre: 'Ana María Ruiz',
   });
+});
+
+test('fecha de fin y contacto', () => {
+  assert.equal(fechaFin('2026-10-15', 3), '2027-01-14');
+  assert.equal(fechaFin('2026-11-01', 6), '2027-04-30');
+  assert.equal(fechaFin('2027-01-31', 1), '2027-02-27');
+  assert.deepEqual(interpretarContacto('310 555 1234 laura@x.com'), { celular: '3105551234', correo: 'laura@x.com' });
+  assert.deepEqual(interpretarContacto('laura@x.com'), { celular: '', correo: 'laura@x.com' });
+  assert.deepEqual(interpretarContacto('+57 310-555-1234'), { celular: '+573105551234', correo: '' });
+  assert.deepEqual(interpretarContacto('ninguno'), { celular: '', correo: '' });
+  assert.equal(interpretarContacto('hola'), null);
 });

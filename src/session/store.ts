@@ -4,6 +4,8 @@ import { estadoInicial } from '../flujo/asistente.js';
 export interface Session {
   chatId: number;
   estado: EstadoAsistente;
+  /** Mensaje de Telegram con la tarjeta del contrato en curso (se edita en cada paso). */
+  tarjetaId?: number;
   actualizado: number;
 }
 

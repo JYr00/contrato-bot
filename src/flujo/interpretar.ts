@@ -160,3 +160,30 @@ export function interpretarDocumentoEscrito(texto: string): DocumentoEscrito {
   if (nombre.split(' ').length >= 2) r.nombre = nombre;
   return r;
 }
+
+/** Suma meses conservando el día (31 ene + 1 mes → 28 feb). */
+export function sumarMeses(fechaIso: string, meses: number): string {
+  const [a, m, d] = fechaIso.split('-').map(Number);
+  const total = a! * 12 + (m! - 1) + meses;
+  const anio = Math.floor(total / 12);
+  const mes = (total % 12) + 1;
+  const ultimoDia = new Date(Date.UTC(anio, mes, 0)).getUTCDate();
+  return iso(anio, mes, Math.min(d!, ultimoDia));
+}
+
+/** Último día del contrato: 15 oct + 3 meses → 14 ene. */
+export function fechaFin(inicioIso: string, meses: number): string {
+  return sumarDias(sumarMeses(inicioIso, meses), -1);
+}
+
+/**
+ * Celular y/o correo en un solo texto: "310 555 1234 laura@x.com", "solo el correo laura@x.com",
+ * "ninguno". Lo que no venga queda en blanco (''). Devuelve null si no reconoce nada.
+ */
+export function interpretarContacto(texto: string): { celular: string; correo: string } | null {
+  if (/^\s*(no|ninguno|nada|en blanco|sin datos)\s*$/i.test(normalizar(texto))) return { celular: '', correo: '' };
+  const correo = texto.match(/[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+/)?.[0] ?? '';
+  const digitos = texto.replace(correo, ' ').replace(/[^\d+]/g, '');
+  const celular = digitos.length >= 7 ? digitos : '';
+  return correo || celular ? { celular, correo } : null;
+}

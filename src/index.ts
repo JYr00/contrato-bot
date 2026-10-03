@@ -1,10 +1,14 @@
+import { dirname, join } from 'node:path';
+
 import Anthropic from '@anthropic-ai/sdk';
 import { Bot, InlineKeyboard, InputFile, type Context } from 'grammy';
 
 import { config } from './config.js';
-import { ContractRenderer } from './contract/render.js';
+import { ContractRenderer, nombreArchivo } from './contract/render.js';
 import type { DatosContrato } from './contract/schema.js';
+import { ArchivosContratos } from './datos/archivos.js';
 import { Catalogo } from './datos/catalogo.js';
+import { Respaldo } from './datos/respaldo.js';
 import { Asistente, type Mensaje, type Salida } from './flujo/asistente.js';
 import { Inventario } from './flujo/inventario.js';
 import { ExtractorDatos } from './ia/extractor-datos.js';
@@ -20,6 +24,9 @@ const renderer = await ContractRenderer.desdeArchivo(
   config.SOFFICE_PATH,
 );
 const catalogo = await Catalogo.abrir(config.CATALOGO_PATH);
+const carpetaDatos = dirname(config.CATALOGO_PATH);
+const archivos = new ArchivosContratos(join(carpetaDatos, 'contratos'));
+const respaldo = new Respaldo(config.CATALOGO_PATH, join(carpetaDatos, 'ultimo-respaldo.txt'));
 const hoy = () => new Intl.DateTimeFormat('en-CA', { timeZone: ZONA_HORARIA }).format(new Date());
 const claude = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 const asistente = new Asistente(catalogo, hoy, new ExtractorDatos(claude, config.ANTHROPIC_MODEL));
@@ -73,7 +80,8 @@ async function generar(ctx: Context, session: Session, datos: DatosContrato) {
     const contrato = await renderer.generar(datos);
     if (contrato.pdf) await ctx.replyWithDocument(new InputFile(contrato.pdf, `${contrato.nombreBase}.pdf`));
     await ctx.replyWithDocument(new InputFile(contrato.docx, `${contrato.nombreBase}.docx`));
-    await catalogo.registrarContrato(datos);
+    const id = await catalogo.registrarContrato(datos);
+    await archivos.guardar(id, contrato).catch((err) => console.error(`[contratos] No se pudo guardar ${id}:`, err));
     await editarTarjeta(ctx, session, asistente.generado(session.estado));
     console.log(`[chat ${session.chatId}] Contrato generado: ${contrato.nombreBase}`);
   } catch (err) {
@@ -85,12 +93,49 @@ async function generar(ctx: Context, session: Session, datos: DatosContrato) {
 }
 
 /** Vuelve a enviar los archivos de un contrato ya generado (desde el informe de inmuebles). */
-async function reenviar(ctx: Context, datos: DatosContrato) {
+async function reenviar(ctx: Context, datos: DatosContrato, id?: string) {
   await ctx.replyWithChatAction('upload_document');
-  const contrato = await renderer.generar(datos);
+  // Los archivos originales si se guardaron (contratos de antes se vuelven a generar).
+  const contrato = (id && (await archivos.leer(id))) || (await renderer.generar(datos));
+  const nombre = nombreArchivo(datos);
   const caption = `📄 Copia del contrato de ${datos.arrendatario_nombre}`;
-  if (contrato.pdf) await ctx.replyWithDocument(new InputFile(contrato.pdf, `${contrato.nombreBase}.pdf`), { caption });
-  await ctx.replyWithDocument(new InputFile(contrato.docx, `${contrato.nombreBase}.docx`), contrato.pdf ? {} : { caption });
+  if (contrato.pdf) await ctx.replyWithDocument(new InputFile(contrato.pdf, `${nombre}.pdf`), { caption });
+  await ctx.replyWithDocument(new InputFile(contrato.docx, `${nombre}.docx`), contrato.pdf ? {} : { caption });
+}
+
+/** Envía el catálogo a esos chats. Devuelve cuántos lo recibieron. */
+/** Único chat donde se manejan los respaldos: tienen datos personales de todos los arrendatarios. */
+const chatRespaldo = config.RESPALDO_CHAT_ID ?? config.USUARIOS_AUTORIZADOS[0];
+
+async function enviarRespaldo(chats: number[], motivo: string): Promise<number> {
+  const archivo = await respaldo.archivo(hoy());
+  if (!archivo) return 0;
+  const caption =
+    `💾 Respaldo ${motivo} · ${hoy()}\n\nGuarda este archivo: con él se recupera todo (edificios, apartamentos, ` +
+    'historial de contratos y arrendatarios). Contiene datos personales; no lo reenvíes.';
+  let enviados = 0;
+  for (const chat of chats) {
+    try {
+      await bot.api.sendDocument(chat, new InputFile(archivo.datos, archivo.nombre), { caption });
+      enviados++;
+    } catch (err) {
+      console.error(`[respaldo] No se pudo enviar a ${chat}:`, (err as Error).message);
+    }
+  }
+  if (enviados) await respaldo.marcar();
+  return enviados;
+}
+
+/** Respaldo automático: se revisa al arrancar y cada 6 horas; se envía si pasaron 7 días del último. */
+async function revisarRespaldo() {
+  try {
+    if (await respaldo.toca()) {
+      if (!chatRespaldo) return;
+      if (await enviarRespaldo([chatRespaldo], 'semanal')) console.log(`[respaldo] Enviado al chat ${chatRespaldo}.`);
+    }
+  } catch (err) {
+    console.error('[respaldo] Error:', err);
+  }
 }
 
 const responder = (ctx: Context, m: Mensaje) => ctx.reply(m.texto, { reply_markup: teclado(m) });
@@ -154,6 +199,14 @@ bot.command(['inmuebles', 'direcciones'], async (ctx) => {
   await responder(ctx, texto ? await inventario.agregarEdificio(texto) : inventario.resumen());
 });
 
+bot.command('respaldo', async (ctx) => {
+  if (ctx.chat.id !== chatRespaldo) {
+    return void (await ctx.reply('🔒 Los respaldos se manejan en otro chat. Pídeselo a quien los recibe.'));
+  }
+  const enviados = await enviarRespaldo([ctx.chat.id], 'manual');
+  if (!enviados) await ctx.reply('Todavía no hay datos para respaldar.');
+});
+
 bot.command('contratos', async (ctx) => {
   const session = await sesiones.get(ctx.chat.id);
   session.inventario.esperando = undefined;
@@ -176,7 +229,8 @@ bot.callbackQuery(/^inv:/, async (ctx) => {
   await ctx.editMessageText(m.texto, { reply_markup: teclado(m) }).catch((err) => {
     if (!noModificado(err)) throw err;
   });
-  if (accion?.tipo === 'reenviar') await reenviar(ctx, accion.datos);
+  if (accion?.tipo === 'reenviar') await reenviar(ctx, accion.datos, accion.id);
+  if (accion?.tipo === 'borrado') await archivos.borrar(accion.id);
   if (accion?.tipo === 'renovar') await mostrar(ctx, session, asistente.renovarContrato(session.estado, accion.datos));
   if (accion?.tipo === 'nuevo') await mostrar(ctx, session, asistente.nuevoEn(session.estado, accion.direccion));
   await sesiones.save(session);
@@ -236,6 +290,7 @@ await bot.api.setMyCommands([
   { command: 'inmuebles', description: 'Informe de edificios y apartamentos' },
   { command: 'libres', description: 'Apartamentos libres' },
   { command: 'contratos', description: 'Últimos contratos: ver, reenviar o borrar' },
+  { command: 'respaldo', description: 'Recibir un respaldo de todos los datos' },
 ]);
 
 if (!config.USUARIOS_AUTORIZADOS.length) {
@@ -244,6 +299,9 @@ if (!config.USUARIOS_AUTORIZADOS.length) {
 
 process.once('SIGINT', () => bot.stop());
 process.once('SIGTERM', () => bot.stop());
+
+setTimeout(revisarRespaldo, 60_000);
+setInterval(revisarRespaldo, 6 * 60 * 60 * 1000);
 
 console.log('Bot iniciado (long polling)…');
 await bot.start();

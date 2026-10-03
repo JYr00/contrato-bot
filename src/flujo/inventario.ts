@@ -26,7 +26,10 @@ export interface EstadoInmueble {
 
 /** Lo que el adaptador debe hacer además de mostrar el mensaje. */
 export type Accion =
-  | { tipo: 'reenviar'; datos: DatosContrato }
+  /** `id`: contrato guardado, para reenviar sus archivos originales si existen. */
+  | { tipo: 'reenviar'; datos: DatosContrato; id?: string }
+  /** Se borró un contrato: el adaptador borra también sus archivos guardados. */
+  | { tipo: 'borrado'; id: string }
   | { tipo: 'renovar'; datos: DatosContrato }
   | { tipo: 'nuevo'; direccion: string };
 
@@ -460,7 +463,7 @@ Toca uno para ver el detalle o reenviarlo.`,
       case 'creenv': {
         const c = this.catalogo.contrato(a!);
         if (!c) return { mensaje: this.contratos('Ese contrato ya no existe.') };
-        return { mensaje: this.detalleContrato(a!), accion: { tipo: 'reenviar', datos: c.datos } };
+        return { mensaje: this.detalleContrato(a!), accion: { tipo: 'reenviar', datos: c.datos, id: c.id } };
       }
       case 'cdel': {
         const c = this.catalogo.contrato(a!);
@@ -486,7 +489,7 @@ Toca uno para ver el detalle o reenviarlo.`,
         ]
           .filter(Boolean)
           .join('\n');
-        return { mensaje: this.contratos(aviso) };
+        return { mensaje: this.contratos(aviso), accion: { tipo: 'borrado', id: borrado.id } };
       }
 
       case 'reenviar':
@@ -501,7 +504,9 @@ Toca uno para ver el detalle o reenviarlo.`,
             ? (estadoActual.contrato ?? this.catalogo.contratosDe(direccion)[0])
             : this.catalogo.contratosDe(direccion)[0];
         if (!datos) return { mensaje: this.unidad(i, j, 'Este inmueble no tiene contratos.') };
-        return { mensaje: this.unidad(i, j), accion: { tipo: accion, datos } };
+        if (accion === 'renovar') return { mensaje: this.unidad(i, j), accion: { tipo: 'renovar', datos } };
+        const id = this.catalogo.contratosGuardadosDe(direccion).find((c) => c.datos === datos)?.id;
+        return { mensaje: this.unidad(i, j), accion: { tipo: 'reenviar', datos, id } };
       }
       default:
         return { mensaje: this.resumen() };

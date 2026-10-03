@@ -19,6 +19,11 @@ const esquema = z.object({
         .map(Number),
     ),
   CATALOGO_PATH: z.string().default('data/catalogo.json'),
+  /** Único chat que recibe los respaldos (y donde funciona /respaldo). Vacío = el primer usuario autorizado. */
+  RESPALDO_CHAT_ID: z
+    .string()
+    .optional()
+    .transform((v) => (v?.trim() ? Number(v) : undefined)),
   SOFFICE_PATH: z.string().default('soffice'),
   PLANTILLA_PATH: z.string().default('templates/contrato-arrendamiento.docx'),
 });

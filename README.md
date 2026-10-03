@@ -27,7 +27,12 @@ y recibe el contrato listo en PDF y Word.
 - **Precio** es el arriendo mensual; **canon** es el depósito que se paga una sola vez al inicio. Si no hay
   canon, el parágrafo del depósito no aparece en el contrato.
 - **Edificio y apartamento por separado:** primero se elige el edificio y luego el apartamento (los ya usados
-  salen como botón). Un edificio escrito se guarda de inmediato; con `/direcciones` se ven, agregan o borran.
+  salen como botón). Un edificio escrito se guarda de inmediato.
+- **Informe de inmuebles (`/inmuebles`):** cada edificio con su ocupación; al tocarlo, sus apartamentos con estado
+  (🔴 ocupado, 🟡 vence en ≤ 30 días, 🔵 contrato por iniciar, 🟢 libre) y al tocar uno, el contrato vigente con
+  botones para reenviarlo, renovarlo o hacer uno nuevo ahí. Desde ahí se agregan edificios y apartamentos
+  ("401, 402") o se quitan. `/libres` (o escribir "apartamentos vacíos") muestra solo los libres. El estado sale
+  del historial de contratos guardado en el catálogo.
 - **Aprende de lo que usas.** Cada dirección nueva se guarda al escribirla, y al generar un contrato se guardan
   precio, canon, duración y los datos del arrendatario (`data/catalogo.json`). Los botones muestran primero lo
   más reciente; el precio sugerido es el último usado en ese inmueble.
@@ -58,7 +63,7 @@ cp .env.example .env      # completa TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, y US
 npm run dev               # long polling, recarga al guardar
 ```
 
-Comandos del bot: `/nuevo`, `/renovar`, `/cancelar` y `/direcciones` (ver, agregar o borrar edificios). También basta con enviar la foto de una cédula para empezar.
+Comandos del bot: `/nuevo`, `/renovar`, `/inmuebles` (también `/direcciones`), `/libres` y `/cancelar`. También basta con enviar la foto de una cédula para empezar.
 
 Otros scripts:
 

@@ -1,11 +1,14 @@
 import type { EstadoAsistente } from '../flujo/asistente.js';
 import { estadoInicial } from '../flujo/asistente.js';
+import type { EstadoInventario } from '../flujo/inventario.js';
 
 export interface Session {
   chatId: number;
   estado: EstadoAsistente;
   /** Mensaje de Telegram con la tarjeta del contrato en curso (se edita en cada paso). */
   tarjetaId?: number;
+  /** Informe de inmuebles: si se espera que escriba un apartamento o un edificio. */
+  inventario: EstadoInventario;
   actualizado: number;
 }
 
@@ -17,7 +20,7 @@ export interface SessionStore {
 }
 
 export function nuevaSesion(chatId: number): Session {
-  return { chatId, estado: estadoInicial(), actualizado: Date.now() };
+  return { chatId, estado: estadoInicial(), inventario: {}, actualizado: Date.now() };
 }
 
 export class InMemorySessionStore implements SessionStore {

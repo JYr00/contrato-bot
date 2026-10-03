@@ -37,6 +37,13 @@ export interface Edificio {
   ultimoUso: number;
 }
 
+/** Contrato generado, tal como se llenó: sirve para el informe de inmuebles y para reenviarlo. */
+export interface ContratoGuardado {
+  id: string;
+  generado: number;
+  datos: DatosContrato;
+}
+
 export interface DatosCatalogo {
   /** Edificios guardados a mano o al escribirlos (además de los deducidos de los inmuebles). */
   edificios: Edificio[];
@@ -45,9 +52,39 @@ export interface DatosCatalogo {
   depositos: ValorUsado[];
   duraciones: ValorUsado[];
   arrendatarios: Record<string, ArrendatarioGuardado>;
+  /** Todos los contratos generados, del más antiguo al más reciente. */
+  contratos: ContratoGuardado[];
 }
 
-const vacio = (): DatosCatalogo => ({ edificios: [], inmuebles: [], precios: [], depositos: [], duraciones: [], arrendatarios: {} });
+const vacio = (): DatosCatalogo => ({
+  edificios: [],
+  inmuebles: [],
+  precios: [],
+  depositos: [],
+  duraciones: [],
+  arrendatarios: {},
+  contratos: [],
+});
+
+/**
+ * Catálogos de antes del historial solo guardaban el último contrato de cada arrendatario:
+ * se toman como historial inicial para que el informe de inmuebles no arranque vacío.
+ */
+function migrar(datos: DatosCatalogo): DatosCatalogo {
+  if (datos.contratos.length) return datos;
+  datos.contratos = Object.values(datos.arrendatarios)
+    .filter((a) => a.ultimoContrato)
+    .map((a) => ({
+      id: `migrado-${a.numero}`,
+      generado: a.ultimoUso,
+      datos: { ...a.ultimoContrato!, coarrendatarios: a.ultimoContrato!.coarrendatarios ?? [] },
+    }))
+    .sort((a, b) => a.generado - b.generado);
+  return datos;
+}
+
+/** Orden natural para apartamentos: 201, 202, 301, 1001. */
+const ordenNatural = (a: string, b: string) => a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' });
 
 const clave = (direccion: string) =>
   direccion.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
@@ -77,7 +114,7 @@ export class Catalogo {
   static async abrir(ruta: string, reloj = Date.now): Promise<Catalogo> {
     try {
       const datos = { ...vacio(), ...JSON.parse(await readFile(ruta, 'utf8')) } as DatosCatalogo;
-      return new Catalogo(datos, ruta, reloj);
+      return new Catalogo(migrar(datos), ruta, reloj);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
       return new Catalogo(vacio(), ruta, reloj);
@@ -85,7 +122,7 @@ export class Catalogo {
   }
 
   static enMemoria(datos: Partial<DatosCatalogo> = {}, reloj = Date.now): Catalogo {
-    return new Catalogo({ ...vacio(), ...structuredClone(datos) }, null, reloj);
+    return new Catalogo(migrar({ ...vacio(), ...structuredClone(datos) }), null, reloj);
   }
 
   inmuebles(n = 3): string[] {
@@ -128,6 +165,32 @@ export class Catalogo {
     if (this.datos.edificios.length + this.datos.inmuebles.length === antes) return false;
     await this.guardar();
     return true;
+  }
+
+  /** Todos los edificios en orden alfabético (orden estable para el informe de inmuebles). */
+  edificiosOrdenados(): string[] {
+    return this.edificios(Infinity).sort(ordenNatural);
+  }
+
+  /**
+   * Inmuebles de un edificio (direcciones completas) en orden natural de apartamento. Si el edificio se
+   * arrienda completo (casa), la dirección del edificio es su único inmueble.
+   */
+  inmueblesDe(edificio: string): string[] {
+    const k = clave(edificio);
+    return this.datos.inmuebles
+      .filter((i) => clave(separarUnidad(i.direccion).base) === k)
+      .map((i) => i.direccion)
+      .sort((a, b) => ordenNatural(separarUnidad(a).unidad ?? '', separarUnidad(b).unidad ?? ''));
+  }
+
+  /** Contratos de un inmueble, el más reciente (por fecha de inicio) primero. */
+  contratosDe(direccion: string): DatosContrato[] {
+    const k = clave(direccion);
+    return this.datos.contratos
+      .filter((c) => clave(c.datos.inmueble_direccion) === k)
+      .map((c) => c.datos)
+      .sort((a, b) => b.fecha_inicio.localeCompare(a.fecha_inicio));
   }
 
   /** Apartamentos ya usados en un edificio, del más reciente al más antiguo. */
@@ -221,6 +284,7 @@ export class Catalogo {
       ultimoContrato: { ...d },
       ultimoUso: ahora,
     };
+    this.datos.contratos.push({ id: `${ahora.toString(36)}-${this.datos.contratos.length}`, generado: ahora, datos: { ...d } });
     await this.guardar();
   }
 

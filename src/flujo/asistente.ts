@@ -378,6 +378,22 @@ export class Asistente {
     return { tarjeta: this.tarjeta(e, PEDIR_DOCUMENTO), nueva: true };
   }
 
+  /** Contrato nuevo con el inmueble ya elegido (desde el informe de inmuebles): solo falta la cédula. */
+  nuevoEn(e: EstadoAsistente, direccion: string): Salida {
+    Object.assign(e, estadoInicial(), { paso: 'documento' });
+    e.datos.inmueble_direccion = direccion;
+    e.edificio = separarUnidad(direccion).base;
+    return { tarjeta: this.tarjeta(e, PEDIR_DOCUMENTO), nueva: true };
+  }
+
+  /** Renovación de un contrato concreto (desde el informe de inmuebles): va directo al resumen. */
+  renovarContrato(e: EstadoAsistente, anterior: DatosContrato): Salida {
+    Object.assign(e, estadoInicial());
+    const { datos, avisos } = this.renovacion(anterior);
+    e.datos = datos;
+    return { ...this.resumen(e, avisos), nueva: true };
+  }
+
   /** /renovar: lista los últimos contratos para elegir cuál renovar. */
   renovar(e: EstadoAsistente): Salida {
     Object.assign(e, estadoInicial());

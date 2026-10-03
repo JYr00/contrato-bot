@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { DatosContrato } from '../contract/schema.js';
-import { fechaFin, separarUnidad } from '../flujo/interpretar.js';
+import { componerDireccion, fechaFin, separarUnidad } from '../flujo/interpretar.js';
 
 export interface Inmueble {
   direccion: string;
@@ -160,6 +160,59 @@ export class Catalogo {
     else this.datos.edificios.push({ direccion, ultimoUso: this.reloj() });
     await this.guardar();
     return nuevo;
+  }
+
+  /**
+   * Corrige la dirección de un edificio: sus apartamentos, el historial de contratos y los arrendatarios pasan
+   * a la dirección nueva. Devuelve un error (sin cambiar nada) si la nueva ya existe.
+   */
+  async renombrarEdificio(viejo: string, nuevo: string): Promise<string | null> {
+    const kViejo = clave(viejo);
+    // Si solo cambia el formato (mayúsculas, espacios, signos) no hay conflicto consigo mismo.
+    if (clave(nuevo) !== kViejo && this.edificios(Infinity).some((d) => clave(d) === clave(nuevo))) {
+      return `Ya existe el edificio ${nuevo}.`;
+    }
+    const mapa = new Map<string, string>([[kViejo, nuevo]]);
+    for (const i of this.datos.inmuebles) {
+      const { base, unidad } = separarUnidad(i.direccion);
+      if (clave(base) === kViejo) mapa.set(clave(i.direccion), componerDireccion(nuevo, unidad));
+    }
+    return this.mover(mapa, [viejo, nuevo]);
+  }
+
+  /**
+   * Corrige un inmueble (p. ej. el número de apartamento) conservando sus contratos. Devuelve un error (sin
+   * cambiar nada) si la dirección nueva ya existe.
+   */
+  async renombrarInmueble(viejo: string, nuevo: string): Promise<string | null> {
+    if (clave(viejo) !== clave(nuevo) && this.inmueble(nuevo)) return `Ya existe ${nuevo}.`;
+    return this.mover(new Map([[clave(viejo), nuevo]]));
+  }
+
+  /**
+   * Cambia direcciones en todo el catálogo según `mapa` (clave vieja → dirección nueva): inmuebles, edificios,
+   * historial de contratos y arrendatarios. La dirección de notificación cambia solo si era la del inmueble.
+   */
+  private async mover(mapa: Map<string, string>, edificio?: [string, string]): Promise<null> {
+    const nueva = (d: string) => mapa.get(clave(d)) ?? d;
+    const moverContrato = (c: DatosContrato) => {
+      const antes = c.inmueble_direccion;
+      c.inmueble_direccion = nueva(antes);
+      if (clave(c.arrendatario_direccion) === clave(antes)) c.arrendatario_direccion = c.inmueble_direccion;
+    };
+
+    for (const i of this.datos.inmuebles) i.direccion = nueva(i.direccion);
+    if (edificio) {
+      for (const e of this.datos.edificios) if (clave(e.direccion) === clave(edificio[0])) e.direccion = edificio[1];
+    }
+    for (const c of this.datos.contratos) moverContrato(c.datos);
+    for (const a of Object.values(this.datos.arrendatarios)) {
+      if (a.direccion && a.ultimoInmueble && clave(a.direccion) === clave(a.ultimoInmueble)) a.direccion = nueva(a.direccion);
+      if (a.ultimoInmueble) a.ultimoInmueble = nueva(a.ultimoInmueble);
+      if (a.ultimoContrato) moverContrato(a.ultimoContrato);
+    }
+    await this.guardar();
+    return null;
   }
 
   /** Borra un edificio de las sugerencias, con sus apartamentos y precios guardados. */

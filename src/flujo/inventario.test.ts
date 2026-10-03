@@ -74,7 +74,7 @@ test('informe general, edificio y libres', async () => {
     ['🏢 Calle 80 # 12-34, Bogotá · 0/0'],
     ['🏢 Carrera 105 i 67 d 31, Bogotá · 2/4'],
     ['🟢 Ver libres (2)'],
-    ['➕ Agregar edificio'],
+    ['⚙️ Ajustes'],
   ]);
 
   const edificio = inv.edificio(1);
@@ -116,7 +116,7 @@ test('detalle de un apartamento y sus acciones', async () => {
     ['📄 Reenviar contrato', '🔁 Renovar'],
     ['🗂 Contratos (1)'],
     ['📝 Nuevo contrato aquí'],
-    ['🗑 Quitar', '↩️ Volver'],
+    ['⚙️ Ajustes', '↩️ Volver'],
   ]);
 
   const reenviar = await inv.boton(estado, data(detalle, 'Reenviar'));
@@ -134,7 +134,7 @@ test('detalle de un apartamento y sus acciones', async () => {
   assert.equal(e.datos.fecha_inicio, '2027-02-01');
 
   const libre = inv.unidad(1, 3);
-  assert.deepEqual(etiquetas(libre), [['📝 Nuevo contrato aquí'], ['🗑 Quitar', '↩️ Volver']], 'sin contratos no hay reenviar ni renovar');
+  assert.deepEqual(etiquetas(libre), [['📝 Nuevo contrato aquí'], ['⚙️ Ajustes', '↩️ Volver']], 'sin contratos no hay reenviar ni renovar');
   const nuevo = await inv.boton(estado, data(libre, 'Nuevo contrato'));
   assert.deepEqual(nuevo.accion, { tipo: 'nuevo', direccion: apto('302') });
   s = a.nuevoEn(e, apto('302'));
@@ -221,7 +221,7 @@ test('/contratos: ver, reenviar y borrar un contrato hecho por error', async () 
   const reenviar = await inv.boton(estado, data(r.mensaje, 'Reenviar'));
   assert.equal(reenviar.accion?.tipo, 'reenviar');
 
-  r = await inv.boton(estado, data(r.mensaje, 'Borrar'));
+  r = await inv.boton(estado, data((await inv.boton(estado, data(r.mensaje, 'Ajustes'))).mensaje, 'Borrar contrato'));
   assert.match(r.mensaje.texto, /¿Borrar el contrato de PRUEBA PRUEBA en Carrera 105 i 67 d 31 apto 302, Bogotá/);
   r = await inv.boton(estado, data(r.mensaje, 'Sí, borrar'));
   assert.match(r.mensaje.texto, /🗑 Borré el contrato de PRUEBA PRUEBA/);
@@ -253,7 +253,7 @@ test('borrar el último contrato de alguien devuelve el anterior para renovar', 
   r = await inv.boton(estado, data(r.mensaje, 'Contratos (1)'));
   assert.match(r.mensaje.texto, /🗂 Contratos de Carrera 105 i 67 d 31 apto 202, Bogotá/);
   r = await inv.boton(estado, data(r.mensaje, 'LAURA'));
-  r = await inv.boton(estado, data(r.mensaje, 'Borrar'));
+  r = await inv.boton(estado, data((await inv.boton(estado, data(r.mensaje, 'Ajustes'))).mensaje, 'Borrar contrato'));
   await inv.boton(estado, data(r.mensaje, 'Sí, borrar'));
 
   const laura = catalogo.arrendatario('1020345678')!;
@@ -261,4 +261,110 @@ test('borrar el último contrato de alguien devuelve el anterior para renovar', 
   assert.equal(laura.ultimoContrato!.fecha_inicio, '2026-01-01');
   assert.ok(catalogo.precios(undefined, 10).includes(1_000_000));
   assert.ok(!catalogo.precios(undefined, 10).includes(1_200_000));
+});
+
+// --- ⚙️ Ajustes ---------------------------------------------------------------------------------------
+
+test('el menú normal no tiene botones de agregar, corregir ni borrar: están en ⚙️ Ajustes', async () => {
+  const catalogo = await catalogoDeEjemplo();
+  const inv = new Inventario(catalogo, () => HOY);
+  const estado: EstadoInventario = {};
+  const i = catalogo.edificiosOrdenados().indexOf(EDIFICIO);
+  const id = catalogo.contratosRecientes(1)[0]!.id;
+  const peligrosos = /🗑|➕|✏️/;
+
+  for (const m of [inv.resumen(), inv.edificio(i), inv.unidad(i, 0), inv.detalleContrato(id), inv.libres(), inv.contratos()]) {
+    assert.ok(!etiquetas(m)!.flat().some((t) => peligrosos.test(t)), `botones peligrosos en: ${JSON.stringify(etiquetas(m))}`);
+  }
+
+  assert.deepEqual(etiquetas((await inv.boton(estado, data(inv.resumen(), 'Ajustes'))).mensaje), [
+    ['➕ Agregar edificio'],
+    ['↩️ Volver'],
+  ]);
+  assert.deepEqual(etiquetas((await inv.boton(estado, data(inv.edificio(i), 'Ajustes'))).mensaje), [
+    ['➕ Agregar apartamentos'],
+    ['✏️ Cambiar dirección'],
+    ['🗑 Borrar edificio'],
+    ['↩️ Volver'],
+  ]);
+  assert.deepEqual(etiquetas((await inv.boton(estado, data(inv.unidad(i, 0), 'Ajustes'))).mensaje), [
+    ['✏️ Cambiar número'],
+    ['🗑 Quitar apartamento'],
+    ['↩️ Volver'],
+  ]);
+  assert.deepEqual(etiquetas((await inv.boton(estado, data(inv.detalleContrato(id), 'Ajustes'))).mensaje), [
+    ['🗑 Borrar contrato'],
+    ['↩️ Volver'],
+  ]);
+
+  // "No" en una confirmación vuelve a los ajustes, no a la vista normal.
+  const confirmar = await inv.boton(estado, `inv:delu:${i}:0`);
+  assert.equal(data(confirmar.mensaje, 'No'), `inv:aju:${i}:0`);
+});
+
+test('✏️ cambiar número de apartamento conserva sus contratos', async () => {
+  const catalogo = Catalogo.enMemoria();
+  await catalogo.registrarContrato(contrato(apto('310'), 'LAURA GÓMEZ PÉREZ', '1020345678', '2026-08-01', 6));
+  await catalogo.agregarInmueble(apto('302'));
+  const inv = new Inventario(catalogo, () => HOY);
+  const estado: EstadoInventario = {};
+  const i = catalogo.edificiosOrdenados().indexOf(EDIFICIO);
+  const j = catalogo.inmueblesDe(EDIFICIO).indexOf(apto('310'));
+
+  let r = await inv.boton(estado, `inv:aju:${i}:${j}`);
+  r = await inv.boton(estado, data(r.mensaje, 'Cambiar número'));
+  assert.match(r.mensaje.texto, /Escribe el número correcto/);
+  assert.equal(estado.esperando, 'numero_apartamento');
+
+  // Inválido: lo vuelve a pedir. Existente: no cambia nada.
+  let m = await inv.texto(estado, 'casa');
+  assert.match(m!.texto, /No entendí el número/);
+  m = await inv.texto(estado, '302');
+  assert.match(m!.texto, /⚠️ Ya existe Carrera 105 i 67 d 31 apto 302, Bogotá/);
+  assert.ok(catalogo.inmueble(apto('310')));
+
+  r = await inv.boton(estado, `inv:renu:${i}:${j}`);
+  m = await inv.texto(estado, 'apto 301');
+  assert.match(m!.texto, /✏️ Cambié 310 → 301/);
+  assert.match(m!.texto, /🏠 Carrera 105 i 67 d 31 apto 301, Bogotá\n\n🔴 Ocupado/, 'sigue ocupado con su contrato');
+  assert.equal(catalogo.inmueble(apto('310')), undefined);
+  assert.equal(catalogo.contratosDe(apto('301')).length, 1);
+
+  const laura = catalogo.arrendatario('1020345678')!;
+  assert.equal(laura.ultimoInmueble, apto('301'));
+  assert.equal(laura.ultimoContrato!.inmueble_direccion, apto('301'));
+  assert.equal(laura.ultimoContrato!.arrendatario_direccion, apto('301'), 'la notificación seguía al inmueble');
+});
+
+test('✏️ cambiar dirección del edificio mueve apartamentos e historial', async () => {
+  const catalogo = await catalogoDeEjemplo();
+  const inv = new Inventario(catalogo, () => HOY);
+  const estado: EstadoInventario = {};
+  const i = catalogo.edificiosOrdenados().indexOf(EDIFICIO);
+  const NUEVO = 'Carrera 105 I # 67 D - 31, Bogotá';
+
+  await inv.boton(estado, `inv:rene:${i}`);
+  let m = await inv.texto(estado, `${NUEVO} apto 201`);
+  assert.match(m!.texto, /⚠️ Escribe la dirección del edificio sin el apartamento/);
+  m = await inv.texto(estado, 'Calle 80 # 12-34, Bogotá');
+  assert.match(m!.texto, /⚠️ Ya existe el edificio Calle 80 # 12-34, Bogotá/);
+
+  await inv.boton(estado, `inv:rene:${i}`);
+  m = await inv.texto(estado, NUEVO);
+  assert.match(m!.texto, /✏️ Cambié la dirección:\nCarrera 105 i 67 d 31, Bogotá → Carrera 105 I # 67 D - 31, Bogotá/);
+  assert.match(m!.texto, /🔴 201 · LAURA GÓMEZ · hasta 31 ene 2027/, 'el estado sigue cuadrando');
+  assert.ok(!catalogo.edificiosOrdenados().includes(EDIFICIO));
+  assert.deepEqual(catalogo.inmueblesDe(NUEVO), [
+    'Carrera 105 I # 67 D - 31 apto 201, Bogotá',
+    'Carrera 105 I # 67 D - 31 apto 202, Bogotá',
+    'Carrera 105 I # 67 D - 31 apto 301, Bogotá',
+    'Carrera 105 I # 67 D - 31 apto 302, Bogotá',
+  ]);
+
+  // Renovar desde el informe usa la dirección nueva.
+  const a = new Asistente(catalogo, () => HOY);
+  const e = estadoInicial();
+  const s = a.renovarContrato(e, catalogo.arrendatario('1020345678')!.ultimoContrato!);
+  assert.equal(e.datos.inmueble_direccion, 'Carrera 105 I # 67 D - 31 apto 201, Bogotá');
+  assert.match(s.tarjeta.texto, /🏠 Carrera 105 I # 67 D - 31 apto 201, Bogotá/);
 });

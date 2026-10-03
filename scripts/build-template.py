@@ -13,6 +13,8 @@ from pathlib import Path
 from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 
 OUT = Path(__file__).resolve().parent.parent / "templates" / "contrato-arrendamiento.docx"
@@ -40,6 +42,17 @@ def p(title: str = "", body: str = "", *, indent: float = 0, align=WD_ALIGN_PARA
     if body:
         par.add_run(body)
     return par
+
+
+def mantener_junta(tabla):
+    """Evita que la tabla se parta entre páginas: ninguna fila se divide y cada fila va con la siguiente."""
+    for i, fila in enumerate(tabla.rows):
+        trPr = fila._tr.get_or_add_trPr()
+        trPr.append(OxmlElement("w:cantSplit"))
+        for celda in fila.cells:
+            for par in celda.paragraphs:
+                par.paragraph_format.keep_together = True
+                par.paragraph_format.keep_with_next = i < len(tabla.rows) - 1
 
 
 # --- Encabezado -------------------------------------------------------------
@@ -310,14 +323,18 @@ for r, (izq, der) in enumerate(filas):
             par.paragraph_format.space_after = Pt(2)
             run = par.add_run(linea)
             run.bold = r == 0
+mantener_junta(tabla)
 
 doc.add_paragraph()
-p("", "Para constancia, el presente Contrato es suscrito en la ciudad de Bogotá, en "
+# El cierre y las firmas van siempre juntos en la misma página: si no caben, pasan completos a la siguiente.
+constancia = p("", "Para constancia, el presente Contrato es suscrito en la ciudad de Bogotá, en "
   "{ejemplares_texto} ejemplares de igual valor, cada uno de ellos con destino a cada una de las "
   "partes.")
+constancia.paragraph_format.keep_with_next = True
+constancia.paragraph_format.keep_together = True
 
-doc.add_paragraph()
-doc.add_paragraph()
+for _ in range(2):
+    doc.add_paragraph().paragraph_format.keep_with_next = True
 firmas = doc.add_table(rows=4, cols=2)
 firmas.alignment = WD_TABLE_ALIGNMENT.CENTER
 contenido = [
@@ -332,6 +349,7 @@ for r, (izq, der) in enumerate(contenido):
         par.paragraph_format.space_after = Pt(0)
         run = par.add_run(texto)
         run.bold = r == 1
+mantener_junta(firmas)
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
 doc.save(OUT)

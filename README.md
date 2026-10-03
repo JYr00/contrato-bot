@@ -12,7 +12,8 @@ y recibe el contrato listo en PDF y Word.
            ┌────────────── ¿hay contratos anteriores? ──────────────┤
            ▼ sí                                                     ▼ no
   💡 Sugerencia completa                              Paso a paso con botones:
-  [Usar sugerencia] [Paso a paso]                     🏠 Inmueble   [Dir. 1] [Dir. 2] [➕ Otra]
+  [Usar sugerencia] [Paso a paso]                     🏠 Edificio   [Dir. 1] [Dir. 2] [➕ Otra]
+           │                                          🚪 Apto       [201] [501] [Sin apto] [➕ Otro]
            │                                          💰 Precio     [$1.5M] [$1.3M] [➕ Otro]
            │                                          🔐 Canon      [$500k] [Sin canon] [➕ Otro]
            │                                          📅 Duración   [3 meses] [6 meses] [➕ Otro]
@@ -25,6 +26,8 @@ y recibe el contrato listo en PDF y Word.
   fin y total a pagar al iniciar) y la pregunta actual, con botón ⬅️ Atrás. Al terminar queda como constancia.
 - **Precio** es el arriendo mensual; **canon** es el depósito que se paga una sola vez al inicio. Si no hay
   canon, el parágrafo del depósito no aparece en el contrato.
+- **Edificio y apartamento por separado:** primero se elige el edificio y luego el apartamento (los ya usados
+  salen como botón). Un edificio escrito se guarda de inmediato; con `/direcciones` se ven, agregan o borran.
 - **Aprende de lo que usas.** Cada dirección nueva se guarda al escribirla, y al generar un contrato se guardan
   precio, canon, duración y los datos del arrendatario (`data/catalogo.json`). Los botones muestran primero lo
   más reciente; el precio sugerido es el último usado en ese inmueble.
@@ -42,11 +45,11 @@ Requisitos: Node 20+, y LibreOffice para generar el PDF (sin él, el bot envía 
 
 ```bash
 npm install
-cp .env.example .env      # completa TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY y USUARIOS_AUTORIZADOS
+cp .env.example .env      # completa TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, y USUARIOS_AUTORIZADOS
 npm run dev               # long polling, recarga al guardar
 ```
 
-Comandos del bot: `/nuevo`, `/cancelar`. También basta con enviar la foto de una cédula para empezar.
+Comandos del bot: `/nuevo`, `/cancelar` y `/direcciones` (ver, agregar o borrar edificios). También basta con enviar la foto de una cédula para empezar.
 
 Otros scripts:
 

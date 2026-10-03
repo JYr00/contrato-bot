@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { DatosContrato } from '../contract/schema.js';
+import { separarUnidad } from '../flujo/interpretar.js';
 
 export interface Inmueble {
   direccion: string;
@@ -29,7 +30,14 @@ export interface ArrendatarioGuardado {
   ultimoUso: number;
 }
 
+export interface Edificio {
+  direccion: string;
+  ultimoUso: number;
+}
+
 export interface DatosCatalogo {
+  /** Edificios guardados a mano o al escribirlos (además de los deducidos de los inmuebles). */
+  edificios: Edificio[];
   inmuebles: Inmueble[];
   precios: ValorUsado[];
   depositos: ValorUsado[];
@@ -37,7 +45,7 @@ export interface DatosCatalogo {
   arrendatarios: Record<string, ArrendatarioGuardado>;
 }
 
-const vacio = (): DatosCatalogo => ({ inmuebles: [], precios: [], depositos: [], duraciones: [], arrendatarios: {} });
+const vacio = (): DatosCatalogo => ({ edificios: [], inmuebles: [], precios: [], depositos: [], duraciones: [], arrendatarios: {} });
 
 const clave = (direccion: string) =>
   direccion.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, '');
@@ -80,6 +88,54 @@ export class Catalogo {
 
   inmuebles(n = 3): string[] {
     return recientes(this.datos.inmuebles).slice(0, n).map((i) => i.direccion);
+  }
+
+  /**
+   * Edificios (dirección sin apartamento), del más reciente al más antiguo: los guardados con
+   * agregarEdificio y los deducidos de los inmuebles ya usados.
+   */
+  edificios(n = 4): string[] {
+    const todos = [
+      ...this.datos.edificios,
+      ...this.datos.inmuebles.map((i) => ({ direccion: separarUnidad(i.direccion).base, ultimoUso: i.ultimoUso })),
+    ].sort((a, b) => b.ultimoUso - a.ultimoUso);
+    const vistos = new Set<string>();
+    return todos
+      .map((e) => e.direccion)
+      .filter((d) => !vistos.has(clave(d)) && vistos.add(clave(d)))
+      .slice(0, n);
+  }
+
+  /** Guarda (o marca como recién usado) un edificio. Devuelve true si no se conocía. */
+  async agregarEdificio(direccion: string): Promise<boolean> {
+    const k = clave(direccion);
+    const nuevo = !this.edificios(Infinity).some((d) => clave(d) === k);
+    const existente = this.datos.edificios.find((e) => clave(e.direccion) === k);
+    if (existente) existente.ultimoUso = this.reloj();
+    else this.datos.edificios.push({ direccion, ultimoUso: this.reloj() });
+    await this.guardar();
+    return nuevo;
+  }
+
+  /** Borra un edificio de las sugerencias, con sus apartamentos y precios guardados. */
+  async quitarEdificio(direccion: string): Promise<boolean> {
+    const k = clave(direccion);
+    const antes = this.datos.edificios.length + this.datos.inmuebles.length;
+    this.datos.edificios = this.datos.edificios.filter((e) => clave(e.direccion) !== k);
+    this.datos.inmuebles = this.datos.inmuebles.filter((i) => clave(separarUnidad(i.direccion).base) !== k);
+    if (this.datos.edificios.length + this.datos.inmuebles.length === antes) return false;
+    await this.guardar();
+    return true;
+  }
+
+  /** Apartamentos ya usados en un edificio, del más reciente al más antiguo. */
+  unidades(edificio: string, n = 6): string[] {
+    const k = clave(edificio);
+    const unidades = recientes(this.datos.inmuebles)
+      .map((i) => separarUnidad(i.direccion))
+      .filter((s) => s.unidad && clave(s.base) === k)
+      .map((s) => s.unidad!);
+    return [...new Set(unidades)].slice(0, n);
   }
 
   inmueble(direccion: string): Inmueble | undefined {

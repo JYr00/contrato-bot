@@ -9,6 +9,9 @@ import {
   primeroDelMesSiguiente,
   fechaFin,
   interpretarContacto,
+  componerDireccion,
+  interpretarUnidad,
+  separarUnidad,
 } from './interpretar.js';
 
 test('pesos escritos de varias formas', () => {
@@ -75,4 +78,20 @@ test('fecha de fin y contacto', () => {
   assert.deepEqual(interpretarContacto('+57 310-555-1234'), { celular: '+573105551234', correo: '' });
   assert.deepEqual(interpretarContacto('ninguno'), { celular: '', correo: '' });
   assert.equal(interpretarContacto('hola'), null);
+});
+
+test('edificio y apartamento', () => {
+  assert.deepEqual(separarUnidad('Carrera 105 i 67 d 31 apto 501'), { base: 'Carrera 105 i 67 d 31', unidad: '501' });
+  assert.deepEqual(separarUnidad('Carrera 105 i 67 d 31 apto 201, Bogotá'), {
+    base: 'Carrera 105 i 67 d 31, Bogotá',
+    unidad: '201',
+  });
+  assert.deepEqual(separarUnidad('Calle 5 # 3-2 Apartamento No. 302'), { base: 'Calle 5 # 3-2', unidad: '302' });
+  assert.deepEqual(separarUnidad('Calle 5 apartado aéreo'), { base: 'Calle 5 apartado aéreo' });
+  assert.equal(componerDireccion('Carrera 105 i 67 d 31, Bogotá', '201'), 'Carrera 105 i 67 d 31 apto 201, Bogotá');
+  assert.equal(componerDireccion('Carrera 105 i 67 d 31', '501'), 'Carrera 105 i 67 d 31 apto 501');
+  assert.equal(componerDireccion('Calle 9 # 1-2'), 'Calle 9 # 1-2');
+  assert.equal(interpretarUnidad('apto 501'), '501');
+  assert.equal(interpretarUnidad('501'), '501');
+  assert.equal(interpretarUnidad('casa'), '');
 });

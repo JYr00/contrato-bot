@@ -217,12 +217,12 @@ const SENALES: RegExp[] = [
   /\bmes(es)?\b|\banos?\b/, // duración
   /\bdesde\b|\binicia|\bempieza|\b(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-z]*\b|\b\d{1,2}\/\d{1,2}\b/, // fecha
   /\b(apto|apartamento|apt)\b/, // apartamento
-  /\bcanon\b|\bdeposito\b/, // canon
+  /\bdeposito\b/, // depósito
   /\bpersonas?\b|\bocupantes?\b/, // ocupantes
 ];
 
 /**
- * Cuántos tipos de dato distintos menciona un texto (dinero, duración, fecha, apartamento, canon, ocupantes).
+ * Cuántos tipos de dato distintos menciona un texto (dinero, duración, fecha, apartamento, depósito, ocupantes).
  * Con 2 o más, el mensaje trae varios datos a la vez y conviene interpretarlo completo.
  */
 export function senalesDeDatos(texto: string): number {

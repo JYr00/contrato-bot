@@ -40,13 +40,13 @@ test('primer contrato: sin historial se escribe todo y la tarjeta acumula lo res
   assert.deepEqual(catalogo.edificios(), ['Carrera 105 i 67 d 31, Bogotá']);
 
   s = await a.recibirTexto(e, '50');
-  assert.match(s.tarjeta.texto, /⚠️ El precio parece demasiado bajo/, 'valida el precio');
+  assert.match(s.tarjeta.texto, /⚠️ El canon parece demasiado bajo/, 'valida el canon');
   assert.equal(e.paso, 'precio');
   s = await a.recibirTexto(e, '750 mil');
   assert.equal(e.datos.precio_mensual, 750_000);
 
   s = await a.recibirTexto(e, '200.000');
-  assert.match(s.tarjeta.texto, /💵 Al iniciar: \$950\.000 \(primer mes \+ canon\)/);
+  assert.match(s.tarjeta.texto, /💵 Al iniciar: \$950\.000 \(primer mes \+ depósito\)/);
   s = await a.recibirBoton(e, boton(s, '3 meses'));
   s = await a.recibirTexto(e, '15/10/2026');
   assert.match(s.tarjeta.texto, /🗓️ Del 15 de octubre de 2026 al 14 de enero de 2027/);
@@ -107,9 +107,9 @@ test('arrendatario conocido: la foto propone renovar y se genera en dos toques',
   s = await a.recibirBoton(e, boton(s, 'Sí, continuar'));
   assert.equal(e.paso, 'propuesta');
   assert.match(s.tarjeta.texto, /🔁 Renovación del contrato que vence el 31 de octubre de 2026/);
-  assert.match(s.tarjeta.texto, /Precio: \$1\.500\.000/);
-  assert.match(s.tarjeta.texto, /Canon \(depósito\): sin canon/, 'el canon ya se entregó en el contrato anterior');
-  assert.match(s.tarjeta.texto, /🔐 Sin canon: ya se entregó/);
+  assert.match(s.tarjeta.texto, /Canon: \$1\.500\.000/);
+  assert.match(s.tarjeta.texto, /Depósito: sin depósito/, 'el depósito ya se entregó en el contrato anterior');
+  assert.match(s.tarjeta.texto, /🔐 Sin depósito: ya se entregó/);
   assert.match(s.tarjeta.texto, /Del 1 de noviembre de 2026 al 31 de enero de 2027/);
   assert.match(s.tarjeta.texto, /Contacto: 3105551234/);
 
@@ -119,7 +119,7 @@ test('arrendatario conocido: la foto propone renovar y se genera en dos toques',
 
   s = await a.recibirBoton(e, boton(s, 'Generar'));
   const texto = textoDocx((await renderer.generar(s.generar!)).docx);
-  assert.doesNotMatch(texto, /título de depósito/, 'sin canon no aparece el parágrafo');
+  assert.doesNotMatch(texto, /título de depósito/, 'sin depósito no aparece el parágrafo');
   assert.doesNotMatch(texto, /[{}]/);
 });
 
@@ -151,11 +151,11 @@ test('opciones guardadas, "otro valor", atrás y botones viejos', async () => {
   assert.deepEqual(etiquetas(s), [['101'], ['🏠 Sin apartamento (casa completa)'], ['➕ Otro apartamento', '⬅️ Atrás']]);
   s = await a.recibirBoton(e, boton(s, '101'));
   assert.equal(e.datos.inmueble_direccion, 'Calle 1 # 2-3 apto 101');
-  assert.equal(etiquetas(s)![0]![0], '$900.000', 'primero el último precio usado en ese inmueble');
+  assert.equal(etiquetas(s)![0]![0], '$900.000', 'primero el último canon usado en ese inmueble');
 
   const viejo = boton(s, '$900.000');
   s = await a.recibirBoton(e, boton(s, 'Otro valor'));
-  assert.match(s.tarjeta.texto, /✍️ Escribe el precio/);
+  assert.match(s.tarjeta.texto, /✍️ Escribe el canon/);
   s = await a.recibirTexto(e, '950 mil');
   assert.equal(e.datos.precio_mensual, 950_000);
   assert.equal((await a.recibirBoton(e, viejo)).obsoleto, true, 'botones de pasos anteriores se ignoran');
@@ -329,14 +329,14 @@ function extractorFalso(respuestas: Record<string, Record<string, unknown>>) {
 test('mensaje libre: varios datos de una vez y solo se pregunta lo que falta', async () => {
   const catalogo = Catalogo.enMemoria({ edificios: [{ direccion: 'Carrera 105 i 67 d 31, Bogotá', ultimoUso: 1 }] });
   const { extractor, llamadas } = extractorFalso({
-    'apto 501, 750 mil, 200 de canon, 3 meses desde el 15': {
+    'apto 501, 750 mil, 200 de depósito, 3 meses desde el 15': {
       apartamento: '501',
       precio_mensual: 750_000,
       deposito: 200_000,
       duracion_meses: 3,
       fecha_inicio: '2026-10-15',
     },
-    'cambia el precio a 800 mil': { precio_mensual: 800_000 },
+    'cambia el canon a 800 mil': { precio_mensual: 800_000 },
     'precio 50 y 2 personas': { precio_mensual: 50, numero_ocupantes: 2 },
   });
   const a = new Asistente(catalogo, () => HOY, extractor);
@@ -345,11 +345,11 @@ test('mensaje libre: varios datos de una vez y solo se pregunta lo que falta', a
   await a.recibirTexto(e, 'Laura Gómez Pérez CC 1020345678');
   assert.equal(e.paso, 'inmueble');
 
-  let s = await a.recibirTexto(e, 'apto 501, 750 mil, 200 de canon, 3 meses desde el 15');
+  let s = await a.recibirTexto(e, 'apto 501, 750 mil, 200 de depósito, 3 meses desde el 15');
   assert.equal(llamadas.length, 1);
   assert.deepEqual(llamadas[0]!.contexto.edificios, ['Carrera 105 i 67 d 31, Bogotá']);
   assert.equal(e.datos.inmueble_direccion, 'Carrera 105 i 67 d 31 apto 501, Bogotá', 'el único edificio completa el apto');
-  assert.match(s.tarjeta.texto, /✍️ Entendí: inmueble, precio \(arriendo mensual\), canon \(depósito inicial\), duración, fecha de inicio\./);
+  assert.match(s.tarjeta.texto, /✍️ Entendí: inmueble, canon \(arriendo mensual\), depósito, duración, fecha de inicio\./);
   assert.match(s.tarjeta.texto, /Del 15 de octubre de 2026 al 14 de enero de 2027/);
   assert.equal(e.paso, 'ocupantes', 'salta a lo primero que falta');
 
@@ -361,15 +361,15 @@ test('mensaje libre: varios datos de una vez y solo se pregunta lo que falta', a
   assert.equal(e.paso, 'resumen');
 
   // Corrección escrita desde el resumen.
-  s = await a.recibirTexto(e, 'cambia el precio a 800 mil');
+  s = await a.recibirTexto(e, 'cambia el canon a 800 mil');
   assert.equal(e.paso, 'resumen');
   assert.equal(e.datos.precio_mensual, 800_000);
-  assert.match(s.tarjeta.texto, /✍️ Entendí: precio/);
+  assert.match(s.tarjeta.texto, /✍️ Entendí: canon/);
 
   // Lo inválido no se guarda y se avisa; lo válido sí.
   s = await a.recibirTexto(e, 'precio 50 y 2 personas');
   assert.equal(e.datos.precio_mensual, 800_000);
-  assert.match(s.tarjeta.texto, /⚠️ Precio \(arriendo mensual\): El precio parece demasiado bajo/);
+  assert.match(s.tarjeta.texto, /⚠️ Canon \(arriendo mensual\): El canon parece demasiado bajo/);
 
   // Si no entiende nada, responde como siempre.
   s = await a.recibirTexto(e, 'hola');

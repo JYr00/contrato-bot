@@ -65,13 +65,13 @@ export const campos = {
     .min(8, 'Dirección incompleta: incluye calle/carrera, número y apartamento si aplica.')
     .max(150)
     .transform((s) => s.replace(/\s+/g, ' ')),
-  precio_mensual: pesos('El precio', 100_000),
+  precio_mensual: pesos('El canon', 100_000),
   deposito: z.coerce
     .number()
-    .int('El canon debe ser un valor entero en pesos.')
+    .int('El depósito debe ser un valor entero en pesos.')
     .min(0)
-    .max(100_000_000, 'El canon parece demasiado alto; confirma el valor.')
-    .refine((n) => n === 0 || n >= 10_000, 'El canon parece demasiado bajo; debe estar en pesos colombianos.'),
+    .max(100_000_000, 'El depósito parece demasiado alto; confirma el valor.')
+    .refine((n) => n === 0 || n >= 10_000, 'El depósito parece demasiado bajo; debe estar en pesos colombianos.'),
   duracion_meses: z.coerce.number().int().min(1, 'Mínimo 1 mes.').max(120, 'Máximo 120 meses.'),
   fecha_inicio: z
     .string()
@@ -101,8 +101,8 @@ export const ETIQUETAS: Record<CampoContrato, string> = {
   arrendatario_numero_documento: 'Número de documento',
   coarrendatarios: 'Co-arrendatarios',
   inmueble_direccion: 'Inmueble',
-  precio_mensual: 'Precio (arriendo mensual)',
-  deposito: 'Canon (depósito inicial)',
+  precio_mensual: 'Canon (arriendo mensual)',
+  deposito: 'Depósito',
   duracion_meses: 'Duración',
   fecha_inicio: 'Fecha de inicio',
   numero_ocupantes: 'Ocupantes',

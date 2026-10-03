@@ -173,11 +173,11 @@ export function describir(d: Datos): string {
       `👤 ${d.arrendatario_nombre} · ${documento(d.arrendatario_tipo_documento!, d.arrendatario_numero_documento!)}`,
     ...(d.coarrendatarios ?? []).map((p) => `👥 ${p.nombre} · ${documento(p.tipo, p.numero)}`),
     d.inmueble_direccion && `🏠 ${d.inmueble_direccion}`,
-    d.precio_mensual && `💰 Precio: ${pesos(d.precio_mensual)} mensuales`,
-    d.deposito !== undefined && `🔐 Canon (depósito): ${d.deposito ? pesos(d.deposito) : 'sin canon'}`,
+    d.precio_mensual && `💰 Canon: ${pesos(d.precio_mensual)} mensuales`,
+    d.deposito !== undefined && `🔐 Depósito: ${d.deposito ? pesos(d.deposito) : 'sin depósito'}`,
     d.precio_mensual &&
       d.deposito &&
-      `💵 Al iniciar: ${pesos(d.precio_mensual + d.deposito)} (primer mes + canon)`,
+      `💵 Al iniciar: ${pesos(d.precio_mensual + d.deposito)} (primer mes + depósito)`,
     d.duracion_meses && `📅 Duración: ${meses(d.duracion_meses)}`,
     periodo,
     d.numero_ocupantes && `👨‍👩‍👧 Ocupantes: ${personasTexto(d.numero_ocupantes)}`,
@@ -192,7 +192,7 @@ export function describir(d: Datos): string {
 interface Opcion {
   etiqueta: string;
   valor: Datos;
-  /** Opción fija (ej. "Sin canon"), no un valor guardado: si solo hay de estas, se pide escribir. */
+  /** Opción fija (ej. "Sin depósito"), no un valor guardado: si solo hay de estas, se pide escribir. */
   fija?: boolean;
 }
 
@@ -260,9 +260,9 @@ const PREGUNTAS: Record<PasoDato, Pregunta> = {
     },
   },
   precio: {
-    titulo: 'Precio',
-    pregunta: '💰 ¿Cuál es el precio del arriendo mensual?',
-    ayuda: 'Escribe el precio mensual. Ej.: 1.500.000 o "1,5 millones"',
+    titulo: 'Canon',
+    pregunta: '💰 ¿Cuál es el canon (arriendo mensual)?',
+    ayuda: 'Escribe el canon mensual. Ej.: 1.500.000 o "1,5 millones"',
     otro: '➕ Otro valor',
     porFila: 3,
     opciones: (c) =>
@@ -270,16 +270,16 @@ const PREGUNTAS: Record<PasoDato, Pregunta> = {
     interpretar: a('precio_mensual', interpretarPesos),
   },
   deposito: {
-    titulo: 'Canon',
-    pregunta: '🔐 ¿Cuál es el canon (depósito inicial)?',
-    ayuda: 'Escribe el valor del canon que se paga al inicio. Ej.: 500.000. Si no hay canon, escribe 0.',
+    titulo: 'Depósito',
+    pregunta: '🔐 ¿Hay depósito? ¿De cuánto?',
+    ayuda: 'Escribe el valor del depósito que se paga al inicio. Ej.: 500.000. Si no hay depósito, escribe 0.',
     otro: '➕ Otro valor',
     porFila: 3,
     opciones: (c) => [
       ...c.catalogo.depositos(c.datos.inmueble_direccion, 2).map((v) => ({ etiqueta: pesos(v), valor: { deposito: v } })),
-      { etiqueta: 'Sin canon', valor: { deposito: 0 }, fija: true },
+      { etiqueta: 'Sin depósito', valor: { deposito: 0 }, fija: true },
     ],
-    interpretar: a('deposito', (t) => (/^\s*(0|no|ninguno|sin( canon)?)\s*$/i.test(t) ? 0 : interpretarPesos(t))),
+    interpretar: a('deposito', (t) => (/^\s*(0|no|ninguno|sin( dep[oó]sito)?)\s*$/i.test(t) ? 0 : interpretarPesos(t))),
   },
   duracion: {
     titulo: 'Duración',
@@ -509,7 +509,7 @@ export class Asistente {
       case 'resumen':
       case 'corregir':
       case 'coarrendatarios':
-        // Correcciones escritas: "cambia el precio a 800 mil".
+        // Correcciones escritas: "cambia el canon a 800 mil".
         return (await this.interpretarLibre(e, texto)) ?? this.actual(e, '👇 Usa los botones o escribe qué cambiar.');
       default: {
         const paso = e.paso;
@@ -710,17 +710,17 @@ export class Asistente {
   }
 
   /**
-   * Contrato que continúa al anterior: mismos datos, empieza el día siguiente al vencimiento y sin canon
-   * (ya se entregó). El precio se mantiene; los avisos recuerdan revisarlo.
+   * Contrato que continúa al anterior: mismos datos, empieza el día siguiente al vencimiento y sin depósito
+   * (ya se entregó). El canon se mantiene; los avisos recuerdan revisarlo.
    */
   private renovacion(anterior: DatosContrato): { datos: Datos; avisos: string[] } {
     const fin = fechaFin(anterior.fecha_inicio, anterior.duracion_meses);
     const inicio = sumarDias(fin, 1);
     const avisos = [
       `🔁 Renovación del contrato que ${fin < this.hoy() ? 'venció' : 'vence'} el ${fechaALetras(fin)}.`,
-      '💰 Mismo precio anterior; corrígelo si hay reajuste.',
+      '💰 Mismo canon anterior; corrígelo si hay reajuste.',
     ];
-    if (anterior.deposito > 0) avisos.push('🔐 Sin canon: ya se entregó en el contrato anterior. Corrígelo si aplica.');
+    if (anterior.deposito > 0) avisos.push('🔐 Sin depósito: ya se entregó en el contrato anterior. Corrígelo si aplica.');
     if (inicio < this.hoy()) avisos.push('⚠️ La fecha de inicio ya pasó; corrígela si el nuevo contrato empieza después.');
     return {
       datos: { ...anterior, coarrendatarios: anterior.coarrendatarios ?? [], fecha_inicio: inicio, deposito: 0 },
@@ -728,7 +728,7 @@ export class Asistente {
     };
   }
 
-  /** Sugerencia completa con lo usado antes. Solo si hay al menos inmueble y precio para sugerir. */
+  /** Sugerencia completa con lo usado antes. Solo si hay al menos inmueble y canon para sugerir. */
   private proponer(e: EstadoAsistente): Datos | undefined {
     const anterior = this.catalogo.arrendatario(e.datos.arrendatario_numero_documento!);
     const direccion = anterior?.ultimoInmueble ?? this.catalogo.inmuebles(1)[0];

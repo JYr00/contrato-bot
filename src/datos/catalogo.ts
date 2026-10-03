@@ -107,7 +107,7 @@ function usar(lista: ValorUsado[], valor: number, ahora: number) {
 }
 
 /**
- * Lo que el arrendador ya usó antes: direcciones, precios, cánones, duraciones y arrendatarios.
+ * Lo que el arrendador ya usó antes: direcciones, cánones, depósitos, duraciones y arrendatarios.
  * Sirve para sugerir opciones en los botones. Se guarda en un JSON; ruta null = solo en memoria (pruebas).
  */
 export class Catalogo {

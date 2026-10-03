@@ -50,5 +50,5 @@ test('validación parcial normaliza y reporta errores', () => {
 });
 
 test('campos faltantes', () => {
-  assert.equal(camposFaltantes({}).length, 13);
+  assert.equal(camposFaltantes({}).length, 14);
 });

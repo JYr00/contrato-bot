@@ -33,7 +33,7 @@ test('envía la imagen con salida estructurada y une nombres y apellidos', async
   const doc = await new LectorDocumento(client, 'modelo').leer(Buffer.from('jpg'), 'image/jpeg');
   assert.deepEqual(doc, { nombre: 'LAURA GÓMEZ PÉREZ', numero: '1.020.345.678', tipo: 'CC' });
 
-  const pedido = llamadas[0] as Anthropic.MessageCreateParams;
+  const pedido = llamadas[0] as unknown as Anthropic.MessageCreateParams;
   assert.equal(pedido.tool_choice, undefined, 'este modelo no admite forzar herramientas');
   assert.equal((pedido.output_config?.format as { type: string }).type, 'json_schema');
   const contenido = pedido.messages[0]!.content as Anthropic.ContentBlockParam[];

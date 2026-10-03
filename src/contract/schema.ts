@@ -30,25 +30,35 @@ const pesos = (campo: string, minimo: number) =>
 /** Texto opcional: '' significa "se dejó en blanco a propósito" (queda una línea para llenar a mano). */
 const opcional = <T extends z.ZodTypeAny>(esquema: T) => z.literal('').or(esquema);
 
+const nombrePersona = z
+  .string()
+  .trim()
+  .min(5, 'Debe ser el nombre completo (nombres y apellidos).')
+  .max(120)
+  .refine((s) => s.split(/\s+/).length >= 2, 'Debe incluir nombres y apellidos.')
+  .transform((s) => s.replace(/\s+/g, ' ').toUpperCase());
+const tipoDocumento = z.enum(['CC', 'CE', 'PA', 'PPT'], {
+  errorMap: () => ({ message: 'Tipo de documento debe ser CC, CE, PA o PPT.' }),
+});
+const numeroDocumento = z
+  .string()
+  .transform((s) => s.replace(/[.\s-]/g, '').toUpperCase())
+  .pipe(z.string().regex(/^[A-Z0-9]{4,15}$/, 'Número de documento inválido.'));
+
+export const MAX_COARRENDATARIOS = 3;
+
 /**
  * Cada campo variable del contrato con su validación.
  * Ningún dato llega a la plantilla sin pasar por aquí.
  */
 export const campos = {
-  arrendatario_nombre: z
-    .string()
-    .trim()
-    .min(5, 'Debe ser el nombre completo (nombres y apellidos).')
-    .max(120)
-    .refine((s) => s.split(/\s+/).length >= 2, 'Debe incluir nombres y apellidos.')
-    .transform((s) => s.replace(/\s+/g, ' ').toUpperCase()),
-  arrendatario_tipo_documento: z.enum(['CC', 'CE', 'PA', 'PPT'], {
-    errorMap: () => ({ message: 'Tipo de documento debe ser CC, CE, PA o PPT.' }),
-  }),
-  arrendatario_numero_documento: z
-    .string()
-    .transform((s) => s.replace(/[.\s-]/g, '').toUpperCase())
-    .pipe(z.string().regex(/^[A-Z0-9]{4,15}$/, 'Número de documento inválido.')),
+  arrendatario_nombre: nombrePersona,
+  arrendatario_tipo_documento: tipoDocumento,
+  arrendatario_numero_documento: numeroDocumento,
+  /** Otros arrendatarios que firman y responden solidariamente (las notificaciones van al principal). */
+  coarrendatarios: z
+    .array(z.object({ nombre: nombrePersona, tipo: tipoDocumento, numero: numeroDocumento }))
+    .max(MAX_COARRENDATARIOS, `Máximo ${MAX_COARRENDATARIOS} co-arrendatarios.`),
   inmueble_direccion: z
     .string()
     .trim()
@@ -89,6 +99,7 @@ export const ETIQUETAS: Record<CampoContrato, string> = {
   arrendatario_nombre: 'Arrendatario',
   arrendatario_tipo_documento: 'Tipo de documento',
   arrendatario_numero_documento: 'Número de documento',
+  coarrendatarios: 'Co-arrendatarios',
   inmueble_direccion: 'Inmueble',
   precio_mensual: 'Precio (arriendo mensual)',
   deposito: 'Canon (depósito inicial)',
@@ -101,7 +112,7 @@ export const ETIQUETAS: Record<CampoContrato, string> = {
   numero_ejemplares: 'Ejemplares',
 };
 
-export const VALORES_POR_DEFECTO: Partial<DatosContrato> = { numero_ejemplares: 2 };
+export const VALORES_POR_DEFECTO: Partial<DatosContrato> = { numero_ejemplares: 2, coarrendatarios: [] };
 
 export interface ResultadoValidacion {
   guardados: Partial<DatosContrato>;

@@ -365,8 +365,8 @@ export class Catalogo {
     return this.datos.arrendatarios[numeroDocumento];
   }
 
-  /** Aprende de un contrato generado para sugerirlo la próxima vez. */
-  async registrarContrato(d: DatosContrato): Promise<void> {
+  /** Aprende de un contrato generado para sugerirlo la próxima vez. Devuelve el id con que quedó guardado. */
+  async registrarContrato(d: DatosContrato): Promise<string> {
     const ahora = this.reloj();
     let inmueble = this.inmueble(d.inmueble_direccion);
     if (!inmueble) {
@@ -397,8 +397,10 @@ export class Catalogo {
       ultimoContrato: { ...d },
       ultimoUso: ahora,
     };
-    this.datos.contratos.push({ id: `${ahora.toString(36)}-${this.datos.contratos.length}`, generado: ahora, datos: { ...d } });
+    const id = `${ahora.toString(36)}-${this.datos.contratos.length}`;
+    this.datos.contratos.push({ id, generado: ahora, datos: { ...d } });
     await this.guardar();
+    return id;
   }
 
   private sugerir(lista: ValorUsado[], primero: number | undefined | '', n: number): number[] {

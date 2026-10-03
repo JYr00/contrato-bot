@@ -11,7 +11,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test src/**/*.test.ts",
     "ejemplo": "tsx scripts/generar-ejemplo.ts",
-    "plantilla": "python3 scripts/build-template.py"
+    "plantilla": "python3 scripts/build-template.py",
+    "pc:instalar": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/instalar-inicio.ps1",
+    "pc:reiniciar": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/detener-bot.ps1",
+    "pc:desinstalar": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/detener-bot.ps1 -Desinstalar"
   },
   "engines": {
     "node": ">=20"

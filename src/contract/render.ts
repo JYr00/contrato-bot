@@ -75,6 +75,12 @@ export function construirContexto(d: DatosContrato, arrendador: DatosArrendador)
   };
 }
 
+/** Nombre de los archivos del contrato: "Contrato_Arrendamiento_GÓMEZ_PÉREZ_2026-11-01". */
+export function nombreArchivo(datos: DatosContrato): string {
+  const apellido = datos.arrendatario_nombre.split(' ').slice(-2).join('_');
+  return `Contrato_Arrendamiento_${apellido}_${datos.fecha_inicio}`.replace(/[^\wÁÉÍÓÚÑáéíóúñ-]/g, '_');
+}
+
 export class ContractRenderer {
   constructor(
     private readonly plantilla: Buffer,
@@ -121,8 +127,6 @@ export class ContractRenderer {
   async generar(datos: DatosContrato): Promise<ContratoGenerado> {
     const docx = this.renderDocx(datos);
     const pdf = await this.docxAPdf(docx);
-    const apellido = datos.arrendatario_nombre.split(' ').slice(-2).join('_');
-    const nombreBase = `Contrato_Arrendamiento_${apellido}_${datos.fecha_inicio}`.replace(/[^\wÁÉÍÓÚÑáéíóúñ-]/g, '_');
-    return { nombreBase, docx, pdf };
+    return { nombreBase: nombreArchivo(datos), docx, pdf };
   }
 }

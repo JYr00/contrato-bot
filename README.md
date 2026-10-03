@@ -70,7 +70,7 @@ cp .env.example .env      # completa TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, y US
 npm run dev               # long polling, recarga al guardar
 ```
 
-Comandos del bot: `/nuevo`, `/renovar`, `/inmuebles` (también `/direcciones`), `/libres`, `/contratos` y `/cancelar`. También basta con enviar la foto de una cédula para empezar.
+Comandos del bot: `/nuevo`, `/renovar`, `/inmuebles` (también `/direcciones`), `/libres`, `/contratos`, `/respaldo` y `/cancelar`. También basta con enviar la foto de una cédula para empezar.
 
 Otros scripts:
 
@@ -88,7 +88,41 @@ están entre llaves, por ejemplo `{precio_texto}`; no partas una llave con forma
 campo nuevo: añádelo en `schema.ts` (validación + etiqueta), en `construirContexto` de `render.ts` y, si se
 debe preguntar, en `ORDEN` y `PREGUNTAS` de `src/flujo/asistente.ts`.
 
-## Despliegue
+## Dejarlo corriendo en tu PC (Windows)
+
+Con pocos usuarios y contratos, el PC propio basta: no cuesta nada y no hace falta servidor. El bot funciona
+mientras el PC esté encendido y con la sesión iniciada.
+
+1. Usa la carpeta principal del proyecto (no una copia de trabajo): ahí vive `data/` con todo lo guardado.
+2. Actualiza y compila:
+   ```bash
+   git pull && npm ci && npm run build
+   ```
+3. En `.env`, si quieres PDF: `SOFFICE_PATH=C:\Program Files\LibreOffice\program\soffice.exe`.
+4. Instala el inicio automático (una sola vez):
+   ```bash
+   npm run pc:instalar
+   ```
+   Crea la tarea "contrato-bot" en el Programador de tareas: abre el bot sin ventana al iniciar sesión y lo
+   vuelve a abrir si se cae. El registro queda en `data/logs/bot-AAAA-MM.log`.
+5. En Windows, Configuración → Sistema → Inicio/apagado → Suspender: **Nunca** (con el cargador conectado);
+   si el PC se suspende, el bot deja de responder hasta que despierte.
+
+Para actualizar: `git pull && npm ci && npm run build && npm run pc:reiniciar`. Para quitarlo:
+`npm run pc:desinstalar`. No corras `npm run dev` al mismo tiempo: Telegram solo admite un bot conectado y
+el segundo falla con "409 Conflict".
+
+### Respaldos
+
+- Cada 7 días el bot envía por Telegram a los usuarios autorizados el archivo `respaldo-contratos-AAAA-MM-DD.json`
+  (edificios, apartamentos, historial de contratos y arrendatarios). Con `/respaldo` se pide uno en cualquier
+  momento. Contiene datos personales: no lo reenvíes.
+- Para recuperar todo en otro PC: instala el bot, copia ese archivo a `data/catalogo.json` y arráncalo.
+- Los PDF y Word de cada contrato se guardan en `data/contratos/` y "📄 Reenviar" manda exactamente esos
+  (los de antes de este cambio se vuelven a generar). No van en el respaldo semanal: también quedaron en el
+  chat cuando se generaron.
+
+## Despliegue en un servidor
 
 Cualquier VPS o contenedor con LibreOffice sirve. Ejemplo de Dockerfile mínimo:
 

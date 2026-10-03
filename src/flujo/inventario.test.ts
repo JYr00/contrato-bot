@@ -122,6 +122,7 @@ test('detalle de un apartamento y sus acciones', async () => {
   const reenviar = await inv.boton(estado, data(detalle, 'Reenviar'));
   assert.equal(reenviar.accion?.tipo, 'reenviar');
   assert.equal(reenviar.accion?.tipo === 'reenviar' && reenviar.accion.datos.arrendatario_nombre, 'LAURA GÓMEZ PÉREZ');
+  assert.equal(reenviar.accion?.tipo === 'reenviar' && reenviar.accion.id, catalogo.contratosGuardadosDe(apto('201'))[0]!.id, 'lleva el id para mandar el archivo original');
 
   // Renovar y nuevo contrato llevan al asistente.
   const a = new Asistente(catalogo, () => HOY);
@@ -225,6 +226,7 @@ test('/contratos: ver, reenviar y borrar un contrato hecho por error', async () 
   assert.match(r.mensaje.texto, /¿Borrar el contrato de PRUEBA PRUEBA en Carrera 105 i 67 d 31 apto 302, Bogotá/);
   r = await inv.boton(estado, data(r.mensaje, 'Sí, borrar'));
   assert.match(r.mensaje.texto, /🗑 Borré el contrato de PRUEBA PRUEBA/);
+  assert.equal(r.accion?.tipo, 'borrado', 'el bot borra también los archivos guardados');
   assert.match(r.mensaje.texto, /Ese inmueble quedó libre/);
 
   // Se deshace lo aprendido: libre, arrendatario olvidado, valores de prueba fuera de las sugerencias.

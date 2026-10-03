@@ -111,6 +111,7 @@ test('detalle de un apartamento y sus acciones', async () => {
   assert.match(detalle.texto, /📄 Contrato vigente\n👤 LAURA GÓMEZ PÉREZ/);
   assert.deepEqual(etiquetas(detalle), [
     ['📄 Reenviar contrato', '🔁 Renovar'],
+    ['🗂 Contratos (1)'],
     ['📝 Nuevo contrato aquí'],
     ['🗑 Quitar', '↩️ Volver'],
   ]);
@@ -191,4 +192,70 @@ test('el historial se arma con los contratos de catálogos anteriores', () => {
   });
   assert.equal(catalogo.contratosDe(apto('201')).length, 1);
   assert.match(new Inventario(catalogo, () => HOY).edificio(0).texto, /🔴 201 · LAURA GÓMEZ · hasta 31 ene 2027/);
+});
+
+test('/contratos: ver, reenviar y borrar un contrato hecho por error', async () => {
+  const catalogo = await catalogoDeEjemplo();
+  // Contrato de prueba con valores raros, en la dirección equivocada.
+  await catalogo.registrarContrato({
+    ...contrato(apto('302'), 'PRUEBA PRUEBA', '99999999', '2026-10-03', 7),
+    precio_mensual: 987_000,
+  });
+  const inv = new Inventario(catalogo, () => HOY);
+  const estado: EstadoInventario = {};
+  const a = new Asistente(catalogo, () => HOY);
+  assert.ok(catalogo.precios(undefined, 10).includes(987_000));
+  assert.ok(catalogo.duraciones(10).includes(7));
+  assert.match(inv.edificio(1).texto, /🔴 302 · PRUEBA PRUEBA/);
+
+  const lista = inv.contratos();
+  assert.equal(etiquetas(lista)![0]![0], 'PRUEBA PRUEBA · apto 302 · 3 oct 2026', 'el más reciente primero');
+  assert.equal(etiquetas(lista)!.length, 5, '4 contratos + volver');
+
+  let r = await inv.boton(estado, data(lista, 'PRUEBA'));
+  assert.match(r.mensaje.texto, /📄 Contrato de PRUEBA PRUEBA/);
+  assert.match(r.mensaje.texto, /🕓 Generado el/);
+  const reenviar = await inv.boton(estado, data(r.mensaje, 'Reenviar'));
+  assert.equal(reenviar.accion?.tipo, 'reenviar');
+
+  r = await inv.boton(estado, data(r.mensaje, 'Borrar'));
+  assert.match(r.mensaje.texto, /¿Borrar el contrato de PRUEBA PRUEBA en Carrera 105 i 67 d 31 apto 302, Bogotá/);
+  r = await inv.boton(estado, data(r.mensaje, 'Sí, borrar'));
+  assert.match(r.mensaje.texto, /🗑 Borré el contrato de PRUEBA PRUEBA/);
+  assert.match(r.mensaje.texto, /Ese inmueble quedó libre/);
+
+  // Se deshace lo aprendido: libre, arrendatario olvidado, valores de prueba fuera de las sugerencias.
+  assert.match(inv.edificio(1).texto, /🟢 302 · libre/);
+  assert.equal(catalogo.arrendatario('99999999'), undefined);
+  assert.ok(!a.renovar(estadoInicial()).tarjeta.botones!.flat().some((b) => b.texto.includes('PRUEBA')));
+  assert.ok(!catalogo.precios(undefined, 10).includes(987_000));
+  assert.ok(!catalogo.duraciones(10).includes(7));
+  assert.equal(catalogo.inmueble(apto('302'))!.ultimoPrecio, undefined);
+
+  // Un botón viejo de ese contrato ya no hace nada.
+  r = await inv.boton(estado, data(lista, 'PRUEBA'));
+  assert.match(r.mensaje.texto, /Ese contrato ya no existe/);
+});
+
+test('borrar el último contrato de alguien devuelve el anterior para renovar', async () => {
+  const catalogo = Catalogo.enMemoria();
+  await catalogo.registrarContrato(contrato(apto('201'), 'LAURA GÓMEZ PÉREZ', '1020345678', '2026-01-01', 6));
+  await catalogo.registrarContrato({ ...contrato(apto('202'), 'LAURA GÓMEZ PÉREZ', '1020345678', '2026-07-01', 6), precio_mensual: 1_200_000 });
+  const inv = new Inventario(catalogo, () => HOY);
+  const estado: EstadoInventario = {};
+
+  // Desde el apartamento: historial y borrado del contrato equivocado (202).
+  const i = catalogo.edificiosOrdenados().indexOf(EDIFICIO);
+  let r = await inv.boton(estado, `inv:u:${i}:1`);
+  r = await inv.boton(estado, data(r.mensaje, 'Contratos (1)'));
+  assert.match(r.mensaje.texto, /🗂 Contratos de Carrera 105 i 67 d 31 apto 202, Bogotá/);
+  r = await inv.boton(estado, data(r.mensaje, 'LAURA'));
+  r = await inv.boton(estado, data(r.mensaje, 'Borrar'));
+  await inv.boton(estado, data(r.mensaje, 'Sí, borrar'));
+
+  const laura = catalogo.arrendatario('1020345678')!;
+  assert.equal(laura.ultimoInmueble, apto('201'));
+  assert.equal(laura.ultimoContrato!.fecha_inicio, '2026-01-01');
+  assert.ok(catalogo.precios(undefined, 10).includes(1_000_000));
+  assert.ok(!catalogo.precios(undefined, 10).includes(1_200_000));
 });

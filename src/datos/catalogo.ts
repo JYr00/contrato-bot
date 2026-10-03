@@ -83,6 +83,12 @@ function migrar(datos: DatosCatalogo): DatosCatalogo {
   return datos;
 }
 
+/**
+ * Contratos del más reciente al más antiguo. Se recorren al revés antes de ordenar para que, si dos se
+ * guardaron en el mismo milisegundo, gane el último guardado (el arreglo está en orden de inserción).
+ */
+const masRecientes = (lista: ContratoGuardado[]) => [...lista].reverse().sort((a, b) => b.generado - a.generado);
+
 /** Orden natural para apartamentos: 201, 202, 301, 1001. */
 const ordenNatural = (a: string, b: string) => a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' });
 
@@ -186,11 +192,65 @@ export class Catalogo {
 
   /** Contratos de un inmueble, el más reciente (por fecha de inicio) primero. */
   contratosDe(direccion: string): DatosContrato[] {
+    return this.contratosGuardadosDe(direccion).map((c) => c.datos);
+  }
+
+  /** Igual que contratosDe, pero con su id (para borrarlos o reenviarlos). */
+  contratosGuardadosDe(direccion: string): ContratoGuardado[] {
     const k = clave(direccion);
     return this.datos.contratos
       .filter((c) => clave(c.datos.inmueble_direccion) === k)
-      .map((c) => c.datos)
-      .sort((a, b) => b.fecha_inicio.localeCompare(a.fecha_inicio));
+      .sort((a, b) => b.datos.fecha_inicio.localeCompare(a.datos.fecha_inicio));
+  }
+
+  /** Últimos contratos generados, el más reciente primero. */
+  contratosRecientes(n = 10): ContratoGuardado[] {
+    return masRecientes(this.datos.contratos).slice(0, n);
+  }
+
+  contrato(id: string): ContratoGuardado | undefined {
+    return this.datos.contratos.find((c) => c.id === id);
+  }
+
+  /**
+   * Borra un contrato del historial (p. ej. una prueba o uno hecho en otra dirección) y deshace lo que se
+   * aprendió de él: el arrendatario vuelve a su contrato anterior (o se olvida si no tiene otro), el inmueble
+   * vuelve a su último precio y los valores que solo se usaron ahí dejan de sugerirse.
+   */
+  async borrarContrato(id: string): Promise<ContratoGuardado | undefined> {
+    const i = this.datos.contratos.findIndex((c) => c.id === id);
+    if (i < 0) return undefined;
+    const [borrado] = this.datos.contratos.splice(i, 1);
+    const d = borrado!.datos;
+
+    const quitarUso = (lista: ValorUsado[], valor: number) => {
+      const v = lista.find((x) => x.valor === valor);
+      if (v && --v.usos <= 0) lista.splice(lista.indexOf(v), 1);
+    };
+    quitarUso(this.datos.precios, d.precio_mensual);
+    if (d.deposito > 0) quitarUso(this.datos.depositos, d.deposito);
+    quitarUso(this.datos.duraciones, d.duracion_meses);
+
+    const inmueble = this.inmueble(d.inmueble_direccion);
+    if (inmueble) {
+      const k = clave(d.inmueble_direccion);
+      const ultimo = masRecientes(this.datos.contratos.filter((c) => clave(c.datos.inmueble_direccion) === k))[0];
+      inmueble.usos = Math.max(0, inmueble.usos - 1);
+      inmueble.ultimoPrecio = ultimo?.datos.precio_mensual;
+      inmueble.ultimoDeposito = ultimo?.datos.deposito;
+    }
+
+    const numero = d.arrendatario_numero_documento;
+    const otros = masRecientes(this.datos.contratos.filter((c) => c.datos.arrendatario_numero_documento === numero));
+    const arrendatario = this.datos.arrendatarios[numero];
+    if (!otros.length) delete this.datos.arrendatarios[numero];
+    else if (arrendatario) {
+      arrendatario.ultimoContrato = otros[0]!.datos;
+      arrendatario.ultimoInmueble = otros[0]!.datos.inmueble_direccion;
+    }
+
+    await this.guardar();
+    return borrado;
   }
 
   /** Apartamentos ya usados en un edificio, del más reciente al más antiguo. */

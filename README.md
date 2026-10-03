@@ -33,6 +33,10 @@ y recibe el contrato listo en PDF y Word.
   botones para reenviarlo, renovarlo o hacer uno nuevo ahí. Desde ahí se agregan edificios y apartamentos
   ("401, 402") o se quitan. `/libres` (o escribir "apartamentos vacíos") muestra solo los libres. El estado sale
   del historial de contratos guardado en el catálogo.
+- **Borrar contratos hechos por error:** `/contratos` lista los últimos (o 🗂 Contratos en cada apartamento);
+  cada uno se puede reenviar o borrar con confirmación. Al borrarlo se deshace lo aprendido: el inmueble queda
+  libre si no tiene otro contrato, el arrendatario vuelve a su contrato anterior (o se olvida) y los valores
+  que solo se usaron ahí dejan de sugerirse. Los archivos ya enviados por el chat no se borran.
 - **Aprende de lo que usas.** Cada dirección nueva se guarda al escribirla, y al generar un contrato se guardan
   precio, canon, duración y los datos del arrendatario (`data/catalogo.json`). Los botones muestran primero lo
   más reciente; el precio sugerido es el último usado en ese inmueble.
@@ -63,7 +67,7 @@ cp .env.example .env      # completa TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, y US
 npm run dev               # long polling, recarga al guardar
 ```
 
-Comandos del bot: `/nuevo`, `/renovar`, `/inmuebles` (también `/direcciones`), `/libres` y `/cancelar`. También basta con enviar la foto de una cédula para empezar.
+Comandos del bot: `/nuevo`, `/renovar`, `/inmuebles` (también `/direcciones`), `/libres`, `/contratos` y `/cancelar`. También basta con enviar la foto de una cédula para empezar.
 
 Otros scripts:
 

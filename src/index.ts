@@ -154,6 +154,12 @@ bot.command(['inmuebles', 'direcciones'], async (ctx) => {
   await responder(ctx, texto ? await inventario.agregarEdificio(texto) : inventario.resumen());
 });
 
+bot.command('contratos', async (ctx) => {
+  const session = await sesiones.get(ctx.chat.id);
+  session.inventario.esperando = undefined;
+  await responder(ctx, inventario.contratos());
+});
+
 bot.command('libres', async (ctx) => {
   const session = await sesiones.get(ctx.chat.id);
   session.inventario.esperando = undefined;
@@ -229,6 +235,7 @@ await bot.api.setMyCommands([
   { command: 'cancelar', description: 'Descartar el contrato en curso' },
   { command: 'inmuebles', description: 'Informe de edificios y apartamentos' },
   { command: 'libres', description: 'Apartamentos libres' },
+  { command: 'contratos', description: 'Últimos contratos: ver, reenviar o borrar' },
 ]);
 
 if (!config.USUARIOS_AUTORIZADOS.length) {

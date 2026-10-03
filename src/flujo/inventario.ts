@@ -35,10 +35,11 @@ export interface RespuestaInventario {
   accion?: Accion;
 }
 
-/** Texto pendiente de escribir (agregar apartamentos o un edificio). Vive en la sesión. */
+/** Texto pendiente de escribir (agregar o corregir en ⚙️ Ajustes). Vive en la sesión. */
 export interface EstadoInventario {
-  esperando?: 'apartamentos' | 'edificio';
+  esperando?: 'apartamentos' | 'edificio' | 'direccion_edificio' | 'numero_apartamento';
   edificio?: number;
+  unidad?: number;
 }
 
 const DIAS_POR_VENCER = 30;
@@ -135,7 +136,7 @@ export class Inventario {
     });
 
     if (libres) botones.push([{ texto: `${EMOJI.libre} Ver libres (${libres})`, data: 'inv:libres' }]);
-    botones.push([{ texto: '➕ Agregar edificio', data: 'inv:addedif' }]);
+    botones.push([{ texto: '⚙️ Ajustes', data: 'inv:aj' }]);
     const cuerpo = edificios.length ? bloques.join('\n\n') : 'Todavía no hay inmuebles registrados.';
     return {
       texto: [aviso, `🏢 Inmuebles · ${fechaALetras(hoy)}`, cuerpo].filter(Boolean).join('\n\n'),
@@ -197,15 +198,14 @@ export class Inventario {
       if (j % 3 === 0) botones.push([]);
       botones.at(-1)!.push({ texto: `${EMOJI[estados[j]!.tipo]} ${etiquetaUnidad(d)}`, data: `inv:u:${i}:${j}` });
     });
-    botones.push([{ texto: '➕ Agregar apartamento', data: `inv:addapto:${i}` }]);
     botones.push([
-      { texto: '🗑 Borrar edificio', data: `inv:deledif:${i}` },
+      { texto: '⚙️ Ajustes', data: `inv:aje:${i}` },
       { texto: '↩️ Inmuebles', data: 'inv:inicio' },
     ]);
 
     const lineas = inmuebles.length
       ? inmuebles.map((d, j) => lineaEstado(etiquetaUnidad(d), estados[j]!)).join('\n')
-      : 'Sin apartamentos registrados. Agrégalos con ➕.';
+      : 'Sin apartamentos registrados. Agrégalos desde ⚙️ Ajustes.';
     return { texto: [aviso, `🏢 ${edificio}`, lineas].filter(Boolean).join('\n\n'), botones };
   }
 
@@ -243,7 +243,7 @@ export class Inventario {
     if (contratos.length) botones.push([{ texto: `🗂 Contratos (${contratos.length})`, data: `inv:uc:${i}:${j}` }]);
     botones.push([{ texto: '📝 Nuevo contrato aquí', data: `inv:nuevo:${i}:${j}` }]);
     botones.push([
-      { texto: '🗑 Quitar', data: `inv:delu:${i}:${j}` },
+      { texto: '⚙️ Ajustes', data: `inv:aju:${i}:${j}` },
       { texto: '↩️ Volver', data: `inv:e:${i}` },
     ]);
     return { texto: partes.filter(Boolean).join('\n\n'), botones };
@@ -256,7 +256,7 @@ export class Inventario {
       texto: [
         aviso,
         '🗂 Últimos contratos generados',
-        recientes.length ? 'Toca uno para ver el detalle, reenviarlo o borrarlo.' : 'Todavía no hay contratos.',
+        recientes.length ? 'Toca uno para ver el detalle o reenviarlo.' : 'Todavía no hay contratos.',
       ]
         .filter(Boolean)
         .join('\n\n'),
@@ -273,7 +273,7 @@ export class Inventario {
     return {
       texto: `🗂 Contratos de ${direccion}
 
-Toca uno para ver el detalle, reenviarlo o borrarlo.`,
+Toca uno para ver el detalle o reenviarlo.`,
       botones: [...contratos.map((c) => [this.botonContrato(c, false)]), [{ texto: '↩️ Volver', data: `inv:u:${i}:${j}` }]],
     };
   }
@@ -288,13 +288,68 @@ Toca uno para ver el detalle, reenviarlo o borrarlo.`,
         .filter(Boolean)
         .join('\n\n'),
       botones: [
+        [{ texto: '📄 Reenviar', data: `inv:creenv:${id}` }],
         [
-          { texto: '📄 Reenviar', data: `inv:creenv:${id}` },
-          { texto: '🗑 Borrar', data: `inv:cdel:${id}` },
+          { texto: '⚙️ Ajustes', data: `inv:ajc:${id}` },
+          { texto: '↩️ Contratos', data: 'inv:contratos' },
         ],
-        [{ texto: '↩️ Contratos', data: 'inv:contratos' }],
       ],
     };
+  }
+
+  // --- ⚙️ Ajustes: agregar, corregir y borrar, separados de las vistas normales ---------------------
+
+  ajustesResumen(aviso?: string): Mensaje {
+    return {
+      texto: [
+        aviso,
+        '⚙️ Ajustes de inmuebles',
+        'Para corregir o borrar un edificio o apartamento, entra a él y toca ⚙️ Ajustes.',
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+      botones: [[{ texto: '➕ Agregar edificio', data: 'inv:addedif' }], [{ texto: '↩️ Volver', data: 'inv:inicio' }]],
+    };
+  }
+
+  ajustesEdificio(i: number, aviso?: string): Mensaje {
+    const edificio = this.catalogo.edificiosOrdenados()[i];
+    if (!edificio) return this.resumen('La lista cambió; vuelve a elegir.');
+    return {
+      texto: [aviso, `⚙️ Ajustes de ${edificio}`].filter(Boolean).join('\n\n'),
+      botones: [
+        [{ texto: '➕ Agregar apartamentos', data: `inv:addapto:${i}` }],
+        [{ texto: '✏️ Cambiar dirección', data: `inv:rene:${i}` }],
+        [{ texto: '🗑 Borrar edificio', data: `inv:deledif:${i}` }],
+        [{ texto: '↩️ Volver', data: `inv:e:${i}` }],
+      ],
+    };
+  }
+
+  ajustesUnidad(i: number, j: number, aviso?: string): Mensaje {
+    const edificio = this.catalogo.edificiosOrdenados()[i];
+    const direccion = edificio && this.catalogo.inmueblesDe(edificio)[j];
+    if (!direccion) return this.resumen('La lista cambió; vuelve a elegir.');
+    const botones: Boton[][] = [];
+    if (separarUnidad(direccion).unidad) botones.push([{ texto: '✏️ Cambiar número', data: `inv:renu:${i}:${j}` }]);
+    botones.push([{ texto: '🗑 Quitar apartamento', data: `inv:delu:${i}:${j}` }]);
+    botones.push([{ texto: '↩️ Volver', data: `inv:u:${i}:${j}` }]);
+    return { texto: [aviso, `⚙️ Ajustes de ${direccion}`].filter(Boolean).join('\n\n'), botones };
+  }
+
+  ajustesContrato(id: string): Mensaje {
+    const c = this.catalogo.contrato(id);
+    if (!c) return this.contratos('Ese contrato ya no existe.');
+    const d = c.datos;
+    return {
+      texto: `⚙️ Ajustes del contrato de ${d.arrendatario_nombre}\n${d.inmueble_direccion} · desde ${fechaALetras(d.fecha_inicio)}`,
+      botones: [[{ texto: '🗑 Borrar contrato', data: `inv:cdel:${id}` }], [{ texto: '↩️ Volver', data: `inv:c:${id}` }]],
+    };
+  }
+
+  /** Pide escribir un valor (agregar o corregir), con un botón para cancelar y volver a `volver`. */
+  private pedir(texto: string, volver: string): Mensaje {
+    return { texto, botones: [[{ texto: '↩️ Cancelar', data: volver }]] };
   }
 
   /** "LAURA GÓMEZ · apto 301 · 15 oct 2026" (con o sin el inmueble). */
@@ -319,6 +374,32 @@ Toca uno para ver el detalle, reenviarlo o borrarlo.`,
     switch (accion) {
       case 'inicio':
         return { mensaje: this.resumen() };
+      case 'aj':
+        return { mensaje: this.ajustesResumen() };
+      case 'aje':
+        return { mensaje: this.ajustesEdificio(i) };
+      case 'aju':
+        return { mensaje: this.ajustesUnidad(i, j) };
+      case 'ajc':
+        return { mensaje: this.ajustesContrato(a!) };
+      case 'rene':
+        if (!edificio) return { mensaje: this.resumen('La lista cambió; vuelve a elegir.') };
+        Object.assign(estado, { esperando: 'direccion_edificio', edificio: i });
+        return {
+          mensaje: this.pedir(
+            `✏️ Dirección actual: ${edificio}\n\nEscribe la dirección correcta, sin apartamento. Ej.: ${EJEMPLO_EDIFICIO}`,
+            `inv:aje:${i}`,
+          ),
+        };
+      case 'renu':
+        if (!direccion || !separarUnidad(direccion).unidad) return { mensaje: this.resumen('La lista cambió; vuelve a elegir.') };
+        Object.assign(estado, { esperando: 'numero_apartamento', edificio: i, unidad: j });
+        return {
+          mensaje: this.pedir(
+            `✏️ ${direccion}\n\nEscribe el número correcto del apartamento. Ej.: 301`,
+            `inv:aju:${i}:${j}`,
+          ),
+        };
       case 'libres':
         return { mensaje: this.libres() };
       case 'e':
@@ -332,7 +413,7 @@ Toca uno para ver el detalle, reenviarlo o borrarlo.`,
         return {
           mensaje: {
             texto: `🏢 ${edificio}\n\n✍️ Escribe el número del apartamento. Para varios, sepáralos con coma. Ej.: 401, 402`,
-            botones: [[{ texto: '↩️ Cancelar', data: `inv:e:${i}` }]],
+            botones: [[{ texto: '↩️ Cancelar', data: `inv:aje:${i}` }]],
           },
         };
       case 'addedif':
@@ -340,7 +421,7 @@ Toca uno para ver el detalle, reenviarlo o borrarlo.`,
         return {
           mensaje: {
             texto: `✍️ Escribe la dirección del edificio o casa, sin apartamento. Ej.: ${EJEMPLO_EDIFICIO}`,
-            botones: [[{ texto: '↩️ Cancelar', data: 'inv:inicio' }]],
+            botones: [[{ texto: '↩️ Cancelar', data: 'inv:aj' }]],
           },
         };
 
@@ -349,7 +430,7 @@ Toca uno para ver el detalle, reenviarlo o borrarlo.`,
         return {
           mensaje: {
             texto: `🗑 ¿Borrar "${edificio}"?\n\nSe quita del informe y de las sugerencias, con sus apartamentos. Los contratos ya generados no se tocan.`,
-            botones: [[{ texto: '🗑 Sí, borrar', data: `inv:deledifok:${i}` }, { texto: '↩️ No', data: `inv:e:${i}` }]],
+            botones: [[{ texto: '🗑 Sí, borrar', data: `inv:deledifok:${i}` }, { texto: '↩️ No', data: `inv:aje:${i}` }]],
           },
         };
       case 'deledifok':
@@ -362,7 +443,7 @@ Toca uno para ver el detalle, reenviarlo o borrarlo.`,
         return {
           mensaje: {
             texto: `🗑 ¿Quitar "${direccion}" del informe?\n\nLos contratos ya generados no se tocan.`,
-            botones: [[{ texto: '🗑 Sí, quitar', data: `inv:deluok:${i}:${j}` }, { texto: '↩️ No', data: `inv:u:${i}:${j}` }]],
+            botones: [[{ texto: '🗑 Sí, quitar', data: `inv:deluok:${i}:${j}` }, { texto: '↩️ No', data: `inv:aju:${i}:${j}` }]],
           },
         };
       case 'deluok':
@@ -390,7 +471,7 @@ Toca uno para ver el detalle, reenviarlo o borrarlo.`,
               `🗑 ¿Borrar el contrato de ${c.datos.arrendatario_nombre} en ${c.datos.inmueble_direccion}, ` +
               `del ${fechaALetras(c.datos.fecha_inicio)}?\n\nSe quita del historial y del informe, y el bot deja de ` +
               'sugerir lo que aprendió de él. Los archivos que ya se enviaron por el chat no se borran.',
-            botones: [[{ texto: '🗑 Sí, borrar', data: `inv:cdelok:${a}` }, { texto: '↩️ No', data: `inv:c:${a}` }]],
+            botones: [[{ texto: '🗑 Sí, borrar', data: `inv:cdelok:${a}` }, { texto: '↩️ No', data: `inv:ajc:${a}` }]],
           },
         };
       }
@@ -439,7 +520,7 @@ Toca uno para ver el detalle, reenviarlo o borrarlo.`,
         .filter((u): u is string => !!u);
       if (!unidades.length) {
         estado.esperando = 'apartamentos';
-        return { texto: '🤔 No entendí el número. Escríbelo así: 401, 402', botones: [[{ texto: '↩️ Cancelar', data: `inv:e:${estado.edificio}` }]] };
+        return this.pedir('🤔 No entendí el número. Escríbelo así: 401, 402', `inv:aje:${estado.edificio}`);
       }
       const nuevos: string[] = [];
       for (const u of unidades) if (await this.catalogo.agregarInmueble(componerDireccion(edificio, u))) nuevos.push(u);
@@ -455,6 +536,43 @@ Toca uno para ver el detalle, reenviarlo o borrarlo.`,
       estado.esperando = undefined;
       return this.agregarEdificio(texto);
     }
+
+    if (estado.esperando === 'direccion_edificio') {
+      const i = estado.edificio!;
+      const viejo = this.catalogo.edificiosOrdenados()[i];
+      estado.esperando = undefined;
+      if (!viejo) return this.resumen('La lista cambió; vuelve a elegir.');
+      const { guardados, errores } = validarParcial({ inmueble_direccion: texto });
+      const base = guardados.inmueble_direccion && separarUnidad(guardados.inmueble_direccion);
+      if (!base || base.unidad) {
+        estado.esperando = 'direccion_edificio';
+        const problema = errores.inmueble_direccion ?? 'Escribe la dirección del edificio sin el apartamento.';
+        return this.pedir(`⚠️ ${problema}\n\nEj.: ${EJEMPLO_EDIFICIO}`, `inv:aje:${i}`);
+      }
+      const error = await this.catalogo.renombrarEdificio(viejo, base.base);
+      if (error) return this.ajustesEdificio(i, `⚠️ ${error}`);
+      const nuevoI = this.catalogo.edificiosOrdenados().indexOf(base.base);
+      return this.edificio(nuevoI >= 0 ? nuevoI : i, `✏️ Cambié la dirección:\n${viejo} → ${base.base}`);
+    }
+
+    if (estado.esperando === 'numero_apartamento') {
+      const i = estado.edificio!;
+      const j = estado.unidad!;
+      const edificio = this.catalogo.edificiosOrdenados()[i];
+      const direccion = edificio && this.catalogo.inmueblesDe(edificio)[j];
+      estado.esperando = undefined;
+      if (!direccion) return this.resumen('La lista cambió; vuelve a elegir.');
+      const unidad = interpretarUnidad(texto);
+      if (!unidad) {
+        estado.esperando = 'numero_apartamento';
+        return this.pedir('🤔 No entendí el número. Escríbelo así: 301', `inv:aju:${i}:${j}`);
+      }
+      const nueva = componerDireccion(edificio, unidad);
+      const error = await this.catalogo.renombrarInmueble(direccion, nueva);
+      if (error) return this.ajustesUnidad(i, j, `⚠️ ${error}`);
+      const nuevoJ = this.catalogo.inmueblesDe(edificio).indexOf(nueva);
+      return this.unidad(i, nuevoJ >= 0 ? nuevoJ : j, `✏️ Cambié ${etiquetaUnidad(direccion)} → ${unidad}`);
+    }
     return null;
   }
 
@@ -466,7 +584,7 @@ Toca uno para ver el detalle, reenviarlo o borrarlo.`,
     const nuevo = await this.catalogo.agregarEdificio(base);
     if (unidad) await this.catalogo.agregarInmueble(componerDireccion(base, unidad));
     const i = this.catalogo.edificiosOrdenados().indexOf(base);
-    const aviso = nuevo ? `💾 Guardé: ${base}${unidad ? '' : '\nAgrega sus apartamentos con ➕.'}` : `Ya estaba guardado: ${base}`;
+    const aviso = nuevo ? `💾 Guardé: ${base}${unidad ? '' : '\nAgrega sus apartamentos desde ⚙️ Ajustes.'}` : `Ya estaba guardado: ${base}`;
     return i >= 0 ? this.edificio(i, aviso) : this.resumen(aviso);
   }
 }

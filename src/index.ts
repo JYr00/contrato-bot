@@ -203,7 +203,7 @@ bot.on('message:text', async (ctx) => {
   const session = await sesiones.get(ctx.chat.id);
   const texto = ctx.message.text;
 
-  // Respuesta a "➕ Agregar apartamento / edificio" del informe.
+  // Respuesta a lo que se pidió escribir desde ⚙️ Ajustes del informe (agregar o corregir).
   const deInventario = await inventario.texto(session.inventario, texto);
   if (deInventario) return void (await responder(ctx, deInventario));
 

@@ -30,11 +30,14 @@ y recibe el contrato listo en PDF y Word.
   salen como botón). Un edificio escrito se guarda de inmediato.
 - **Informe de inmuebles (`/inmuebles`):** cada edificio con su ocupación; al tocarlo, sus apartamentos con estado
   (🔴 ocupado, 🟡 vence en ≤ 30 días, 🔵 contrato por iniciar, 🟢 libre) y al tocar uno, el contrato vigente con
-  botones para reenviarlo, renovarlo o hacer uno nuevo ahí. Desde ahí se agregan edificios y apartamentos
-  ("401, 402") o se quitan. `/libres` (o escribir "apartamentos vacíos") muestra solo los libres. El estado sale
-  del historial de contratos guardado en el catálogo.
+  botones para reenviarlo, renovarlo o hacer uno nuevo ahí. `/libres` (o escribir "apartamentos vacíos")
+  muestra solo los libres. El estado sale del historial de contratos guardado en el catálogo.
+- **⚙️ Ajustes:** lo que cambia o borra datos va aparte del menú normal. Cada pantalla (inmuebles, edificio,
+  apartamento, contrato) tiene un botón ⚙️ Ajustes con: agregar edificios o apartamentos ("401, 402"), corregir
+  la dirección de un edificio o el número de un apartamento (el historial de contratos se actualiza y el
+  informe sigue cuadrando), quitar apartamentos, borrar edificios y borrar contratos (con confirmación).
 - **Borrar contratos hechos por error:** `/contratos` lista los últimos (o 🗂 Contratos en cada apartamento);
-  cada uno se puede reenviar o borrar con confirmación. Al borrarlo se deshace lo aprendido: el inmueble queda
+  se borran desde ⚙️ Ajustes del contrato, con confirmación. Al borrarlo se deshace lo aprendido: el inmueble queda
   libre si no tiene otro contrato, el arrendatario vuelve a su contrato anterior (o se olvida) y los valores
   que solo se usaron ahí dejan de sugerirse. Los archivos ya enviados por el chat no se borran.
 - **Aprende de lo que usas.** Cada dirección nueva se guarda al escribirla, y al generar un contrato se guardan

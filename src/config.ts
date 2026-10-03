@@ -19,6 +19,16 @@ const esquema = z.object({
         .map(Number),
     ),
   CATALOGO_PATH: z.string().default('data/catalogo.json'),
+  /** Edificios que siempre se ofrecen como botón, separados por punto y coma. */
+  DIRECCIONES_BASE: z
+    .string()
+    .default('')
+    .transform((v) =>
+      v
+        .split(';')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
   SOFFICE_PATH: z.string().default('soffice'),
   PLANTILLA_PATH: z.string().default('templates/contrato-arrendamiento.docx'),
 });

@@ -10,6 +10,7 @@ import {
 } from '../contract/schema.js';
 import type { Catalogo } from '../datos/catalogo.js';
 import {
+  componerDireccion,
   fechaFin,
   interpretarContacto,
   interpretarDocumentoEscrito,
@@ -17,16 +18,19 @@ import {
   interpretarFecha,
   interpretarMeses,
   interpretarPesos,
+  interpretarUnidad,
   primeroDelMesSiguiente,
+  separarUnidad,
 } from './interpretar.js';
 
 /** Preguntas que se hacen una por una, en este orden, después del documento. */
-export const ORDEN = ['inmueble', 'precio', 'deposito', 'duracion', 'fecha', 'ocupantes', 'contacto', 'notificacion'] as const;
+export const ORDEN = ['inmueble', 'unidad', 'precio', 'deposito', 'duracion', 'fecha', 'ocupantes', 'contacto', 'notificacion'] as const;
 export type PasoDato = (typeof ORDEN)[number];
 
 /** Campos del contrato que llena cada pregunta. */
 const CAMPOS_DE: Record<PasoDato, CampoContrato[]> = {
   inmueble: ['inmueble_direccion'],
+  unidad: ['inmueble_direccion'],
   precio: ['precio_mensual'],
   deposito: ['deposito'],
   duracion: ['duracion_meses'],
@@ -56,6 +60,8 @@ export interface EstadoAsistente {
   ofertas: Datos[];
   documento?: DocumentoDetectado;
   propuesta?: Datos;
+  /** Edificio elegido (dirección sin apartamento), mientras se pregunta el apartamento. */
+  edificio?: string;
   /** true cuando se está corrigiendo un dato desde el resumen. */
   volverAResumen: boolean;
 }
@@ -85,7 +91,16 @@ export interface Salida {
 }
 
 export function estadoInicial(): EstadoAsistente {
-  return { paso: 'inicio', datos: { ...VALORES_POR_DEFECTO }, ofertas: [], volverAResumen: false };
+  // Las claves opcionales van explícitas para que Object.assign(e, estadoInicial()) también las limpie.
+  return {
+    paso: 'inicio',
+    datos: { ...VALORES_POR_DEFECTO },
+    ofertas: [],
+    documento: undefined,
+    propuesta: undefined,
+    edificio: undefined,
+    volverAResumen: false,
+  };
 }
 
 // --- Formato -------------------------------------------------------------------------------------
@@ -133,24 +148,30 @@ export function describir(d: Datos): string {
 interface Opcion {
   etiqueta: string;
   valor: Datos;
+  /** Opción fija (ej. "Sin canon"), no un valor guardado: si solo hay de estas, se pide escribir. */
+  fija?: boolean;
 }
 
 interface Contexto {
   datos: Datos;
   catalogo: Catalogo;
   hoy: string;
+  /** Edificio del paso de apartamento. */
+  edificio: string;
+  /** Edificios configurados por el arrendador (DIRECCIONES_BASE). */
+  edificiosFijos: string[];
 }
 
 interface Pregunta {
   /** Nombre corto para el menú de corrección. */
   titulo: string;
-  pregunta: string;
+  pregunta: string | ((c: Contexto) => string);
   /** Qué escribir cuando el usuario elige "otro" o no hay opciones guardadas. */
   ayuda: string;
   otro: string;
   porFila: number;
   opciones(c: Contexto): Opcion[];
-  interpretar(texto: string, hoy: string): Datos | null;
+  interpretar(texto: string, c: Contexto): Datos | null;
 }
 
 const previo = (c: Contexto) =>
@@ -159,23 +180,42 @@ const previo = (c: Contexto) =>
 const unicos = <T>(valores: (T | undefined | null | '')[]) => [...new Set(valores.filter((v): v is T => !!v || v === 0))];
 
 /** Envuelve un intérprete de un solo valor para que devuelva { campo: valor }. */
-const a = <K extends CampoContrato>(campo: K, f: (t: string, hoy: string) => unknown) => (t: string, hoy: string) => {
-  const v = f(t, hoy);
+const a = <K extends CampoContrato>(campo: K, f: (t: string, hoy: string) => unknown) => (t: string, c: Contexto) => {
+  const v = f(t, c.hoy);
   return v === null || v === undefined || v === '' ? null : ({ [campo]: v } as Datos);
 };
 
 const PREGUNTAS: Record<PasoDato, Pregunta> = {
   inmueble: {
     titulo: 'Inmueble',
-    pregunta: '🏠 ¿Qué inmueble se va a arrendar?',
-    ayuda: 'Escribe la dirección completa, con apartamento si aplica. Ej.: Carrera 105 i 67 d 31 apto 201, Bogotá',
+    pregunta: '🏠 ¿En qué edificio o casa?',
+    ayuda: 'Escribe la dirección, con o sin apartamento. Ej.: Carrera 105 i 67 d 31, Bogotá',
     otro: '➕ Otra dirección',
     porFila: 1,
-    opciones: (c) =>
-      unicos([previo(c)?.ultimoInmueble, ...c.catalogo.inmuebles(3)])
-        .slice(0, 3)
-        .map((d) => ({ etiqueta: d, valor: { inmueble_direccion: d } })),
+    opciones: (c) => {
+      const anterior = previo(c)?.ultimoInmueble;
+      return unicos([anterior && separarUnidad(anterior).base, ...c.catalogo.edificios(c.edificiosFijos)])
+        .slice(0, 4)
+        .map((b) => ({ etiqueta: b, valor: { inmueble_direccion: b } }));
+    },
     interpretar: a('inmueble_direccion', (t) => t.trim()),
+  },
+  unidad: {
+    titulo: 'Apartamento',
+    pregunta: (c) => `🚪 ¿Qué apartamento de ${c.edificio}?`,
+    ayuda: 'Escribe el número del apartamento. Ej.: 501',
+    otro: '➕ Otro apartamento',
+    porFila: 3,
+    opciones: (c) => [
+      ...c.catalogo
+        .unidades(c.edificio)
+        .map((u) => ({ etiqueta: u, valor: { inmueble_direccion: componerDireccion(c.edificio, u) } })),
+      { etiqueta: '🏠 Sin apartamento (casa completa)', valor: { inmueble_direccion: c.edificio }, fija: true },
+    ],
+    interpretar: (t, c) => {
+      const u = interpretarUnidad(t);
+      return u === null ? null : { inmueble_direccion: componerDireccion(c.edificio, u || undefined) };
+    },
   },
   precio: {
     titulo: 'Precio',
@@ -195,7 +235,7 @@ const PREGUNTAS: Record<PasoDato, Pregunta> = {
     porFila: 3,
     opciones: (c) => [
       ...c.catalogo.depositos(c.datos.inmueble_direccion, 2).map((v) => ({ etiqueta: pesos(v), valor: { deposito: v } })),
-      { etiqueta: 'Sin canon', valor: { deposito: 0 } },
+      { etiqueta: 'Sin canon', valor: { deposito: 0 }, fija: true },
     ],
     interpretar: a('deposito', (t) => (/^\s*(0|no|ninguno|sin( canon)?)\s*$/i.test(t) ? 0 : interpretarPesos(t))),
   },
@@ -249,7 +289,7 @@ const PREGUNTAS: Record<PasoDato, Pregunta> = {
         ...(conocido
           ? [{ etiqueta: conocido, valor: { arrendatario_celular: p!.celular ?? '', arrendatario_correo: p!.correo ?? '' } }]
           : []),
-        { etiqueta: 'Dejar en blanco', valor: { arrendatario_celular: '', arrendatario_correo: '' } },
+        { etiqueta: 'Dejar en blanco', valor: { arrendatario_celular: '', arrendatario_correo: '' }, fija: true },
       ];
     },
     interpretar: (t) => {
@@ -286,6 +326,8 @@ export class Asistente {
   constructor(
     private readonly catalogo: Catalogo,
     private readonly hoy: () => string,
+    /** Edificios que siempre se ofrecen, aunque todavía no haya contratos (DIRECCIONES_BASE). */
+    private readonly edificiosFijos: string[] = [],
   ) {}
 
   iniciar(e: EstadoAsistente): Salida {
@@ -365,7 +407,7 @@ export class Asistente {
         return this.actual(e, '👇 Usa los botones para continuar.');
       default: {
         const paso = e.paso;
-        const valor = PREGUNTAS[paso].interpretar(texto, this.hoy());
+        const valor = PREGUNTAS[paso].interpretar(texto, this.contexto(e));
         if (!valor) return this.preguntar(e, paso, [`🤔 No entendí "${texto.slice(0, 60)}".`], true);
         return this.aplicar(e, paso, valor);
       }
@@ -490,6 +532,13 @@ export class Asistente {
     const problemas = Object.values(errores);
     if (problemas.length) return this.preguntar(e, paso, problemas.map((p) => `⚠️ ${p}`), true);
 
+    // Se eligió un edificio sin apartamento: falta preguntar cuál.
+    if (paso === 'inmueble' && guardados.inmueble_direccion) {
+      const { base, unidad } = separarUnidad(guardados.inmueble_direccion);
+      e.edificio = base;
+      if (!unidad) return this.preguntar(e, 'unidad');
+    }
+
     const avisos: string[] = [];
     if (guardados.inmueble_direccion) {
       const nueva = guardados.inmueble_direccion;
@@ -521,26 +570,38 @@ export class Asistente {
 
   /** `escribir`: el usuario va a escribir el valor; se muestra la ayuda en vez de los botones de opciones. */
   private preguntar(e: EstadoAsistente, paso: PasoDato, avisos: string[] = [], escribir = false): Salida {
+    const c = this.contexto(e);
+    if (paso === 'unidad' && !c.edificio) return this.preguntar(e, 'inmueble', avisos);
     const p = PREGUNTAS[paso];
-    const opciones = p.opciones({ datos: e.datos, catalogo: this.catalogo, hoy: this.hoy() });
+    const opciones = p.opciones(c);
     e.paso = paso;
     e.ofertas = opciones.map((o) => o.valor);
 
     // Sin valores guardados todavía (primera vez): se pide escribirlo directamente.
-    const haySugerencias = opciones.some((o) => Object.values(o.valor).some((v) => v !== '' && v !== 0));
+    const haySugerencias = opciones.some((o) => !o.fija);
     const mostrarAyuda = escribir || !haySugerencias;
 
     const filas: Boton[][] = [];
+    // Valores guardados en filas de `porFila`; las opciones fijas, cada una en su propia fila.
+    let enFila = 0;
     opciones.forEach((o, i) => {
-      if (i % p.porFila === 0) filas.push([]);
-      filas.at(-1)!.push({ texto: o.etiqueta, data: `${paso}:v${i}` });
+      const boton = { texto: o.etiqueta, data: `${paso}:v${i}` };
+      if (o.fija) {
+        filas.push([boton]);
+        enFila = 0;
+        return;
+      }
+      if (enFila % p.porFila === 0) filas.push([]);
+      filas.at(-1)!.push(boton);
+      enFila++;
     });
     const navegacion: Boton[] = [];
     if (haySugerencias && !escribir) navegacion.push({ texto: p.otro, data: `${paso}:otro` });
     navegacion.push({ texto: '⬅️ Atrás', data: `${paso}:atras` });
     filas.push(navegacion);
 
-    const texto = mostrarAyuda ? `${p.pregunta}\n✍️ ${p.ayuda}` : p.pregunta;
+    const pregunta = typeof p.pregunta === 'function' ? p.pregunta(c) : p.pregunta;
+    const texto = mostrarAyuda ? `${pregunta}\n✍️ ${p.ayuda}` : pregunta;
     return { tarjeta: this.tarjeta(e, texto, filas, avisos) };
   }
 
@@ -602,11 +663,22 @@ export class Asistente {
   private menuCorregir(e: EstadoAsistente, avisos: string[] = []): Salida {
     e.paso = 'corregir';
     const filas: Boton[][] = [[{ texto: '🪪 Arrendatario', data: 'corregir:documento' }]];
-    for (let i = 0; i < ORDEN.length; i += 2) {
-      filas.push(ORDEN.slice(i, i + 2).map((p) => ({ texto: PREGUNTAS[p].titulo, data: `corregir:${p}` })));
+    const corregibles = ORDEN.filter((p) => p !== 'unidad'); // el apartamento se corrige desde "Inmueble"
+    for (let i = 0; i < corregibles.length; i += 2) {
+      filas.push(corregibles.slice(i, i + 2).map((p) => ({ texto: PREGUNTAS[p].titulo, data: `corregir:${p}` })));
     }
     filas.push([{ texto: '↩️ Volver al resumen', data: 'corregir:volver' }]);
     return { tarjeta: { texto: this.componer('📄 Resumen del contrato', describir(e.datos), avisos, '✏️ ¿Qué quieres corregir?'), botones: filas } };
+  }
+
+  private contexto(e: EstadoAsistente): Contexto {
+    return {
+      datos: e.datos,
+      catalogo: this.catalogo,
+      hoy: this.hoy(),
+      edificio: e.edificio ?? (e.datos.inmueble_direccion ? separarUnidad(e.datos.inmueble_direccion).base : ''),
+      edificiosFijos: this.edificiosFijos,
+    };
   }
 
   /** Tarjeta del contrato en curso: datos ya respondidos arriba, avisos y la pregunta actual abajo. */

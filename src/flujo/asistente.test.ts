@@ -137,11 +137,16 @@ test('opciones guardadas, "otro valor", atrás y botones viejos', async () => {
   s = await a.recibirBoton(e, boton(s, 'paso a paso'));
   assert.deepEqual(
     etiquetas(s),
-    [['Calle 4 # 5-6 casa 2'], ['Calle 1 # 2-3 apto 101'], ['➕ Otra dirección', '⬅️ Atrás']],
-    'la más reciente primero, y opción de agregar otra',
+    [['Calle 4 # 5-6 casa 2'], ['Calle 1 # 2-3'], ['➕ Otra dirección', '⬅️ Atrás']],
+    'edificios, el más reciente primero, y opción de agregar otro',
   );
 
   s = await a.recibirBoton(e, boton(s, 'Calle 1'));
+  assert.equal(e.paso, 'unidad');
+  assert.match(s.tarjeta.texto, /¿Qué apartamento de Calle 1 # 2-3\?/);
+  assert.deepEqual(etiquetas(s), [['101'], ['🏠 Sin apartamento (casa completa)'], ['➕ Otro apartamento', '⬅️ Atrás']]);
+  s = await a.recibirBoton(e, boton(s, '101'));
+  assert.equal(e.datos.inmueble_direccion, 'Calle 1 # 2-3 apto 101');
   assert.equal(etiquetas(s)![0]![0], '$900.000', 'primero el último precio usado en ese inmueble');
 
   const viejo = boton(s, '$900.000');
@@ -205,4 +210,34 @@ test('foto ilegible pide otra foto o escribir los datos', async () => {
   assert.match(s.tarjeta.texto, /la foto está borrosa/);
   await a.recibirTexto(e, 'Laura Gómez Pérez CC 1020345678');
   assert.equal(e.datos.arrendatario_numero_documento, '1020345678');
+});
+
+test('edificio configurado: se elige el edificio y luego el apartamento', async () => {
+  const catalogo = Catalogo.enMemoria();
+  const a = new Asistente(catalogo, () => HOY, ['Carrera 105 i 67 d 31, Bogotá']);
+  const e = estadoInicial();
+  a.iniciar(e);
+  let s = await a.recibirTexto(e, 'Laura Pérez CC 165645678');
+  assert.deepEqual(etiquetas(s), [['Carrera 105 i 67 d 31, Bogotá'], ['➕ Otra dirección', '⬅️ Atrás']]);
+
+  s = await a.recibirBoton(e, boton(s, 'Carrera 105'));
+  assert.equal(e.paso, 'unidad');
+  assert.match(s.tarjeta.texto, /✍️ Escribe el número del apartamento/, 'sin apartamentos guardados se pide escribirlo');
+  s = await a.recibirTexto(e, 'apto 501');
+  assert.equal(e.datos.inmueble_direccion, 'Carrera 105 i 67 d 31 apto 501, Bogotá');
+  assert.match(s.tarjeta.texto, /💾 Guardé esta dirección/);
+  assert.equal(e.paso, 'precio');
+
+  // Atrás desde el precio vuelve al apartamento del mismo edificio, ya con el 501 como botón.
+  s = await a.recibirBoton(e, boton(s, 'Atrás'));
+  assert.equal(e.paso, 'unidad');
+  assert.equal(etiquetas(s)![0]![0], '501');
+
+  // Contrato siguiente: el apartamento usado aparece como opción, y "sin apartamento" sirve para casas.
+  a.iniciar(e);
+  s = await a.recibirTexto(e, 'Ana Ruiz Díaz 52123456');
+  s = await a.recibirBoton(e, boton(s, 'Carrera 105'));
+  s = await a.recibirBoton(e, boton(s, 'Sin apartamento'));
+  assert.equal(e.datos.inmueble_direccion, 'Carrera 105 i 67 d 31, Bogotá');
+  assert.equal(e.edificio, 'Carrera 105 i 67 d 31, Bogotá');
 });

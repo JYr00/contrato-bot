@@ -19,7 +19,7 @@ const renderer = await ContractRenderer.desdeArchivo(
 );
 const catalogo = await Catalogo.abrir(config.CATALOGO_PATH);
 const hoy = () => new Intl.DateTimeFormat('en-CA', { timeZone: ZONA_HORARIA }).format(new Date());
-const asistente = new Asistente(catalogo, hoy);
+const asistente = new Asistente(catalogo, hoy, config.DIRECCIONES_BASE);
 const lector = new LectorDocumento(new Anthropic({ apiKey: config.ANTHROPIC_API_KEY }), config.ANTHROPIC_MODEL);
 const sesiones = new InMemorySessionStore();
 const bot = new Bot(config.TELEGRAM_BOT_TOKEN);

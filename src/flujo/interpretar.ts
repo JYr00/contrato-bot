@@ -187,3 +187,27 @@ export function interpretarContacto(texto: string): { celular: string; correo: s
   const celular = digitos.length >= 7 ? digitos : '';
   return correo || celular ? { celular, correo } : null;
 }
+
+const UNIDAD = /^(.*?)[\s,]+(?:apartamento|apto|apt|ap)\b\.?\s*(?:no\.?\s*|#\s*)?([\w-]+)(.*)$/i;
+
+/** "Carrera 105 i 67 d 31 apto 201, Bogotá" → { base: "Carrera 105 i 67 d 31, Bogotá", unidad: "201" } */
+export function separarUnidad(direccion: string): { base: string; unidad?: string } {
+  const m = direccion.trim().match(UNIDAD);
+  if (!m) return { base: direccion.trim() };
+  return { base: `${m[1]}${m[3]}`.trim(), unidad: m[2] };
+}
+
+/** Inverso de separarUnidad: pone "apto X" antes de la ciudad si la hay ("…31 apto 201, Bogotá"). */
+export function componerDireccion(base: string, unidad?: string): string {
+  if (!unidad) return base;
+  const coma = base.indexOf(',');
+  return coma < 0 ? `${base} apto ${unidad}` : `${base.slice(0, coma)} apto ${unidad}${base.slice(coma)}`;
+}
+
+/** "501", "apto 501", "Apartamento No. 501" → "501"; "casa", "ninguno" → '' (sin apartamento). */
+export function interpretarUnidad(texto: string): string | null {
+  const t = texto.trim();
+  if (/^(casa|ninguno|no|sin( apartamento)?|completa)$/i.test(normalizar(t))) return '';
+  const u = t.replace(/^(?:apartamento|apto|apt|ap)\b\.?\s*(?:no\.?\s*|#\s*)?/i, '').trim();
+  return u && u.length <= 20 ? u : null;
+}

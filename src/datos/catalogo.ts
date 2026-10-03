@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { DatosContrato } from '../contract/schema.js';
+import { separarUnidad } from '../flujo/interpretar.js';
 
 export interface Inmueble {
   direccion: string;
@@ -80,6 +81,28 @@ export class Catalogo {
 
   inmuebles(n = 3): string[] {
     return recientes(this.datos.inmuebles).slice(0, n).map((i) => i.direccion);
+  }
+
+  /**
+   * Edificios (dirección sin apartamento), del más reciente al más antiguo. Se deducen de los inmuebles
+   * guardados; `fijos` son los configurados por el arrendador y siempre aparecen.
+   */
+  edificios(fijos: string[] = [], n = 4): string[] {
+    const usados = recientes(this.datos.inmuebles).map((i) => separarUnidad(i.direccion).base);
+    const vistos = new Set<string>();
+    return [...usados, ...fijos]
+      .filter((b) => !vistos.has(clave(b)) && vistos.add(clave(b)))
+      .slice(0, n);
+  }
+
+  /** Apartamentos ya usados en un edificio, del más reciente al más antiguo. */
+  unidades(edificio: string, n = 6): string[] {
+    const k = clave(edificio);
+    const unidades = recientes(this.datos.inmuebles)
+      .map((i) => separarUnidad(i.direccion))
+      .filter((s) => s.unidad && clave(s.base) === k)
+      .map((s) => s.unidad!);
+    return [...new Set(unidades)].slice(0, n);
   }
 
   inmueble(direccion: string): Inmueble | undefined {

@@ -114,8 +114,9 @@ el segundo falla con "409 Conflict".
 
 ### Respaldos
 
-- Cada 7 días el bot envía por Telegram a los usuarios autorizados el archivo `respaldo-contratos-AAAA-MM-DD.json`
-  (edificios, apartamentos, historial de contratos y arrendatarios). Con `/respaldo` se pide uno en cualquier
+- Cada 7 días el bot envía por Telegram el archivo `respaldo-contratos-AAAA-MM-DD.json` (edificios,
+  apartamentos, historial de contratos y arrendatarios) a **un solo chat**: `RESPALDO_CHAT_ID`, o el primer ID de
+  `USUARIOS_AUTORIZADOS` si no se define. Solo en ese chat funciona `/respaldo` para pedir uno en cualquier
   momento. Contiene datos personales: no lo reenvíes.
 - Para recuperar todo en otro PC: instala el bot, copia ese archivo a `data/catalogo.json` y arráncalo.
 - Los PDF y Word de cada contrato se guardan en `data/contratos/` y "📄 Reenviar" manda exactamente esos

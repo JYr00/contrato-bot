@@ -104,6 +104,9 @@ async function reenviar(ctx: Context, datos: DatosContrato, id?: string) {
 }
 
 /** Envía el catálogo a esos chats. Devuelve cuántos lo recibieron. */
+/** Único chat donde se manejan los respaldos: tienen datos personales de todos los arrendatarios. */
+const chatRespaldo = config.RESPALDO_CHAT_ID ?? config.USUARIOS_AUTORIZADOS[0];
+
 async function enviarRespaldo(chats: number[], motivo: string): Promise<number> {
   const archivo = await respaldo.archivo(hoy());
   if (!archivo) return 0;
@@ -127,8 +130,8 @@ async function enviarRespaldo(chats: number[], motivo: string): Promise<number> 
 async function revisarRespaldo() {
   try {
     if (await respaldo.toca()) {
-      const enviados = await enviarRespaldo(config.USUARIOS_AUTORIZADOS, 'semanal');
-      if (enviados) console.log(`[respaldo] Enviado a ${enviados} usuario(s).`);
+      if (!chatRespaldo) return;
+      if (await enviarRespaldo([chatRespaldo], 'semanal')) console.log(`[respaldo] Enviado al chat ${chatRespaldo}.`);
     }
   } catch (err) {
     console.error('[respaldo] Error:', err);
@@ -197,6 +200,9 @@ bot.command(['inmuebles', 'direcciones'], async (ctx) => {
 });
 
 bot.command('respaldo', async (ctx) => {
+  if (ctx.chat.id !== chatRespaldo) {
+    return void (await ctx.reply('🔒 Los respaldos se manejan en otro chat. Pídeselo a quien los recibe.'));
+  }
   const enviados = await enviarRespaldo([ctx.chat.id], 'manual');
   if (!enviados) await ctx.reply('Todavía no hay datos para respaldar.');
 });

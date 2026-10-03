@@ -34,9 +34,10 @@ test('primer contrato: sin historial se escribe todo y la tarjeta acumula lo res
   assert.deepEqual(etiquetas(s), [['⬅️ Atrás']]);
 
   s = await a.recibirTexto(e, 'Carrera 105 i 67 d 31 apto 201, Bogotá');
-  assert.match(s.tarjeta.texto, /💾 Guardé esta dirección/);
+  assert.match(s.tarjeta.texto, /💾 Guardé este edificio/);
   assert.match(s.tarjeta.texto, /🏠 Carrera 105 i 67 d 31 apto 201, Bogotá/);
   assert.deepEqual(catalogo.inmuebles(), ['Carrera 105 i 67 d 31 apto 201, Bogotá']);
+  assert.deepEqual(catalogo.edificios(), ['Carrera 105 i 67 d 31, Bogotá']);
 
   s = await a.recibirTexto(e, '50');
   assert.match(s.tarjeta.texto, /⚠️ El precio parece demasiado bajo/, 'valida el precio');
@@ -212,20 +213,25 @@ test('foto ilegible pide otra foto o escribir los datos', async () => {
   assert.equal(e.datos.arrendatario_numero_documento, '1020345678');
 });
 
-test('edificio configurado: se elige el edificio y luego el apartamento', async () => {
+test('edificio escrito: se guarda, se pregunta el apartamento y queda como botón', async () => {
   const catalogo = Catalogo.enMemoria();
-  const a = new Asistente(catalogo, () => HOY, ['Carrera 105 i 67 d 31, Bogotá']);
+  const a = new Asistente(catalogo, () => HOY);
   const e = estadoInicial();
   a.iniciar(e);
   let s = await a.recibirTexto(e, 'Laura Pérez CC 165645678');
-  assert.deepEqual(etiquetas(s), [['Carrera 105 i 67 d 31, Bogotá'], ['➕ Otra dirección', '⬅️ Atrás']]);
+  s = await a.recibirTexto(e, 'Carrera 105 i 67 d 31, Bogotá');
+  assert.match(s.tarjeta.texto, /💾 Guardé este edificio/);
+  assert.equal(e.paso, 'unidad');
+  assert.deepEqual(catalogo.edificios(), ['Carrera 105 i 67 d 31, Bogotá'], 'se guarda aunque no se termine el contrato');
 
+  // Atrás y elegirlo de nuevo con el botón.
+  s = await a.recibirBoton(e, boton(s, 'Atrás'));
+  assert.deepEqual(etiquetas(s), [['Carrera 105 i 67 d 31, Bogotá'], ['➕ Otra dirección', '⬅️ Atrás']]);
   s = await a.recibirBoton(e, boton(s, 'Carrera 105'));
   assert.equal(e.paso, 'unidad');
   assert.match(s.tarjeta.texto, /✍️ Escribe el número del apartamento/, 'sin apartamentos guardados se pide escribirlo');
   s = await a.recibirTexto(e, 'apto 501');
   assert.equal(e.datos.inmueble_direccion, 'Carrera 105 i 67 d 31 apto 501, Bogotá');
-  assert.match(s.tarjeta.texto, /💾 Guardé esta dirección/);
   assert.equal(e.paso, 'precio');
 
   // Atrás desde el precio vuelve al apartamento del mismo edificio, ya con el 501 como botón.

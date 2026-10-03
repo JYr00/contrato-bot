@@ -158,8 +158,6 @@ interface Contexto {
   hoy: string;
   /** Edificio del paso de apartamento. */
   edificio: string;
-  /** Edificios configurados por el arrendador (DIRECCIONES_BASE). */
-  edificiosFijos: string[];
 }
 
 interface Pregunta {
@@ -194,7 +192,7 @@ const PREGUNTAS: Record<PasoDato, Pregunta> = {
     porFila: 1,
     opciones: (c) => {
       const anterior = previo(c)?.ultimoInmueble;
-      return unicos([anterior && separarUnidad(anterior).base, ...c.catalogo.edificios(c.edificiosFijos)])
+      return unicos([anterior && separarUnidad(anterior).base, ...c.catalogo.edificios()])
         .slice(0, 4)
         .map((b) => ({ etiqueta: b, valor: { inmueble_direccion: b } }));
     },
@@ -326,8 +324,6 @@ export class Asistente {
   constructor(
     private readonly catalogo: Catalogo,
     private readonly hoy: () => string,
-    /** Edificios que siempre se ofrecen, aunque todavía no haya contratos (DIRECCIONES_BASE). */
-    private readonly edificiosFijos: string[] = [],
   ) {}
 
   iniciar(e: EstadoAsistente): Salida {
@@ -532,21 +528,23 @@ export class Asistente {
     const problemas = Object.values(errores);
     if (problemas.length) return this.preguntar(e, paso, problemas.map((p) => `⚠️ ${p}`), true);
 
-    // Se eligió un edificio sin apartamento: falta preguntar cuál.
+    const avisos: string[] = [];
+
+    // Se eligió o escribió un edificio: se guarda y, si no trae apartamento, falta preguntar cuál.
     if (paso === 'inmueble' && guardados.inmueble_direccion) {
       const { base, unidad } = separarUnidad(guardados.inmueble_direccion);
       e.edificio = base;
-      if (!unidad) return this.preguntar(e, 'unidad');
+      if (await this.catalogo.agregarEdificio(base)) avisos.push('💾 Guardé este edificio para la próxima vez.');
+      if (!unidad) return this.preguntar(e, 'unidad', avisos);
     }
 
-    const avisos: string[] = [];
     if (guardados.inmueble_direccion) {
       const nueva = guardados.inmueble_direccion;
       // Si la notificación iba "a la del inmueble", que siga al inmueble nuevo.
       if (e.datos.arrendatario_direccion && e.datos.arrendatario_direccion === e.datos.inmueble_direccion) {
         e.datos.arrendatario_direccion = nueva;
       }
-      if (await this.catalogo.agregarInmueble(nueva)) avisos.push('💾 Guardé esta dirección para la próxima vez.');
+      await this.catalogo.agregarInmueble(nueva);
     }
     Object.assign(e.datos, guardados);
     return this.avanzar(e, avisos);
@@ -677,7 +675,6 @@ export class Asistente {
       catalogo: this.catalogo,
       hoy: this.hoy(),
       edificio: e.edificio ?? (e.datos.inmueble_direccion ? separarUnidad(e.datos.inmueble_direccion).base : ''),
-      edificiosFijos: this.edificiosFijos,
     };
   }
 

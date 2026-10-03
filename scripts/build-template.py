@@ -25,6 +25,27 @@ sec.page_width, sec.page_height = Cm(21.59), Cm(27.94)  # Carta
 for side in ("left_margin", "right_margin", "top_margin", "bottom_margin"):
     setattr(sec, side, Cm(2.5))
 
+def campo(par, codigo):
+    """Inserta un campo de Word (PAGE, NUMPAGES) que el procesador calcula al abrir o convertir."""
+    fld = OxmlElement("w:fldSimple")
+    fld.set(qn("w:instr"), codigo)
+    run = OxmlElement("w:r")
+    texto = OxmlElement("w:t")
+    texto.text = "1"
+    run.append(texto)
+    fld.append(run)
+    par._p.append(fld)
+
+
+pie = sec.footer.paragraphs[0]
+pie.alignment = WD_ALIGN_PARAGRAPH.CENTER
+pie.add_run("Página ")
+campo(pie, "PAGE")
+pie.add_run(" de ")
+campo(pie, "NUMPAGES")
+for run in pie.runs:
+    run.font.size = Pt(8)
+
 normal = doc.styles["Normal"]
 normal.font.name = "Arial"
 normal.font.size = Pt(10.5)
@@ -300,9 +321,12 @@ p("Décima Octava. – Recibos de pago de servicios públicos: ",
   "dentro de los cinco (5) días siguientes al requerimiento que para tal efecto se le haga, sin "
   "perjuicio de que dicho incumplimiento constituya causal de terminación del Contrato.")
 
-p("Décima Novena. – Notificaciones: ",
+# Desde la cláusula de notificaciones hasta las firmas va todo encadenado (keep-with-next): si no cabe, pasa
+# completo a la página siguiente. Así las firmas nunca quedan solas en una hoja sin texto del contrato.
+notificaciones = p("Décima Novena. – Notificaciones: ",
   "Para todos los efectos de este Contrato, las Partes recibirán notificaciones en las siguientes "
   "direcciones:")
+notificaciones.paragraph_format.keep_with_next = True
 
 tabla = doc.add_table(rows=4, cols=2)
 tabla.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -323,9 +347,11 @@ for r, (izq, der) in enumerate(filas):
             run = par.add_run(linea)
             run.bold = r == 0
 mantener_junta(tabla)
+for celda in tabla.rows[-1].cells:  # la última fila también sigue con el cierre
+    for par in celda.paragraphs:
+        par.paragraph_format.keep_with_next = True
 
-doc.add_paragraph()
-# El cierre y las firmas van siempre juntos en la misma página: si no caben, pasan completos a la siguiente.
+doc.add_paragraph().paragraph_format.keep_with_next = True
 constancia = p("", "Para constancia, el presente Contrato es suscrito en la ciudad de Bogotá, en "
   "{ejemplares_texto} ejemplares de igual valor, cada uno de ellos con destino a cada una de las "
   "partes.")

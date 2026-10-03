@@ -12,60 +12,69 @@ const HOY = '2026-10-02';
 const plantilla = await readFile('templates/contrato-arrendamiento.docx');
 const renderer = new ContractRenderer(plantilla, { correo: 'arrendador@example.com', celular: '3001112233' }, '/no/existe');
 
-/** Texto del último mensaje y data del botón cuya etiqueta contiene `etiqueta`. */
-const ultimo = (s: Salida) => s.mensajes.at(-1)!;
+/** data del botón de la tarjeta cuya etiqueta contiene `etiqueta`. */
 function boton(s: Salida, etiqueta: string): string {
-  const b = ultimo(s).botones?.flat().find((x) => x.texto.includes(etiqueta));
-  assert.ok(b, `no hay botón "${etiqueta}" en: ${JSON.stringify(ultimo(s))}`);
+  const b = s.tarjeta.botones?.flat().find((x) => x.texto.includes(etiqueta));
+  assert.ok(b, `no hay botón "${etiqueta}" en: ${JSON.stringify(s.tarjeta)}`);
   return b.data;
 }
+const etiquetas = (s: Salida) => s.tarjeta.botones?.map((f) => f.map((b) => b.texto));
 const textoDocx = (docx: Buffer) => new PizZip(docx).file('word/document.xml')!.asText().replace(/<[^>]+>/g, '');
 
-test('primer contrato: sin historial se escribe todo y se guarda la dirección', async () => {
+test('primer contrato: sin historial se escribe todo y la tarjeta acumula lo respondido', async () => {
   const catalogo = Catalogo.enMemoria();
   const a = new Asistente(catalogo, () => HOY);
   const e = estadoInicial();
 
-  a.iniciar(e);
+  assert.equal(a.iniciar(e).nueva, true);
   let s = await a.recibirTexto(e, 'Laura Gómez Pérez CC 1.020.345.678');
-  assert.equal(e.paso, 'inmueble_direccion', 'sin historial no hay propuesta');
-  assert.equal(ultimo(s).botones, undefined, 'sin direcciones guardadas se pide escribirla');
+  assert.equal(e.paso, 'inmueble', 'sin historial no hay propuesta');
+  assert.match(s.tarjeta.texto, /^📄 Contrato nuevo\n\n👤 LAURA GÓMEZ PÉREZ · C\.C\. 1\.020\.345\.678/);
+  assert.match(s.tarjeta.texto, /✍️ Escribe la dirección/, 'sin direcciones guardadas se pide escribirla');
+  assert.deepEqual(etiquetas(s), [['⬅️ Atrás']]);
 
   s = await a.recibirTexto(e, 'Carrera 105 i 67 d 31 apto 201, Bogotá');
-  assert.match(s.mensajes[0]!.texto, /Guardé esta dirección/);
+  assert.match(s.tarjeta.texto, /💾 Guardé esta dirección/);
+  assert.match(s.tarjeta.texto, /🏠 Carrera 105 i 67 d 31 apto 201, Bogotá/);
   assert.deepEqual(catalogo.inmuebles(), ['Carrera 105 i 67 d 31 apto 201, Bogotá']);
 
   s = await a.recibirTexto(e, '50');
-  assert.match(s.mensajes[0]!.texto, /demasiado bajo/, 'valida el precio');
-  s = await a.recibirTexto(e, '1,5 millones');
-  assert.equal(e.datos.precio_mensual, 1_500_000);
+  assert.match(s.tarjeta.texto, /⚠️ El precio parece demasiado bajo/, 'valida el precio');
+  assert.equal(e.paso, 'precio');
+  s = await a.recibirTexto(e, '750 mil');
+  assert.equal(e.datos.precio_mensual, 750_000);
 
-  s = await a.recibirBoton(e, boton(s, 'Sin canon'));
-  assert.equal(e.datos.deposito, 0);
-  s = await a.recibirBoton(e, boton(s, '6 meses'));
-  s = await a.recibirBoton(e, boton(s, '1 de noviembre de 2026'));
-  s = await a.recibirBoton(e, boton(s, '2'));
-  s = await a.recibirBoton(e, boton(s, 'Dejar en blanco'));
-  assert.equal(e.datos.arrendatario_celular, '');
-  s = await a.recibirTexto(e, 'Laura@Example.com');
+  s = await a.recibirTexto(e, '200.000');
+  assert.match(s.tarjeta.texto, /💵 Al iniciar: \$950\.000 \(primer mes \+ canon\)/);
+  s = await a.recibirBoton(e, boton(s, '3 meses'));
+  s = await a.recibirTexto(e, '15/10/2026');
+  assert.match(s.tarjeta.texto, /🗓️ Del 15 de octubre de 2026 al 14 de enero de 2027/);
+  s = await a.recibirBoton(e, boton(s, '1'));
+  assert.equal(e.paso, 'contacto');
+  s = await a.recibirTexto(e, '310 555 1234 Laura@Example.com');
+  assert.equal(e.datos.arrendatario_celular, '3105551234');
+  assert.equal(e.datos.arrendatario_correo, 'laura@example.com');
+  assert.match(s.tarjeta.texto, /Normalmente es la dirección del inmueble/);
   s = await a.recibirBoton(e, boton(s, 'La del inmueble'));
 
   assert.equal(e.paso, 'resumen');
-  assert.match(ultimo(s).texto, /LAURA GÓMEZ PÉREZ · C\.C\. 1\.020\.345\.678/);
-  assert.match(ultimo(s).texto, /Celular: \(en blanco\)/);
+  assert.match(s.tarjeta.texto, /📱 Contacto: 3105551234 · laura@example\.com/);
 
   s = await a.recibirBoton(e, boton(s, 'Generar'));
   assert.ok(s.generar, 'entrega los datos para generar');
   assert.equal(e.paso, 'listo');
+  assert.equal(s.tarjeta.botones, undefined);
+  assert.match(a.generado(e).texto, /✅ Contrato generado/);
 
-  const contrato = await renderer.generar(s.generar);
-  const texto = textoDocx(contrato.docx);
+  const texto = textoDocx((await renderer.generar(s.generar)).docx);
   assert.match(texto, /Carrera 105 i 67 d 31 apto 201, Bogotá, destinado/);
-  assert.match(texto, /UN MILLÓN QUINIENTOS MIL PESOS \(\$1\.500\.000\)/);
-  assert.match(texto, /seis \(6\) meses, contados a partir del 1 de noviembre de 2026/);
-  assert.doesNotMatch(texto, /título de depósito/, 'sin canon no aparece el parágrafo');
+  assert.match(texto, /SETECIENTOS CINCUENTA MIL PESOS \(\$750\.000\)/);
+  assert.match(texto, /tres \(3\) meses, contados a partir del 15 de octubre de 2026/);
+  assert.match(texto, /DOSCIENTOS MIL PESOS \(\$200\.000\) M\/cte, a título de depósito/);
   assert.doesNotMatch(texto, /[{}]/, 'no quedan campos sin reemplazar');
-  await catalogo.registrarContrato(s.generar);
+
+  // Un mensaje después de terminar arranca otro contrato en una tarjeta nueva.
+  assert.equal((await a.recibirTexto(e, 'Ana Ruiz Díaz 52123456')).nueva, true);
 });
 
 test('con historial: la foto sugiere el resto y se genera en dos toques', async () => {
@@ -76,26 +85,29 @@ test('con historial: la foto sugiere el resto y se genera en dos toques', async 
     arrendatario_numero_documento: '1020345678',
     inmueble_direccion: 'Carrera 105 i 67 d 31 apto 201',
     precio_mensual: 1_500_000,
-    deposito: 500_000,
+    deposito: 0,
     duracion_meses: 3,
     fecha_inicio: '2026-01-01',
     numero_ocupantes: 2,
     arrendatario_celular: '3105551234',
-    arrendatario_correo: 'laura@example.com',
+    arrendatario_correo: '',
     arrendatario_direccion: 'Carrera 105 i 67 d 31 apto 201',
     numero_ejemplares: 2,
   });
   const a = new Asistente(catalogo, () => HOY);
   const e = estadoInicial();
 
-  // Una foto sin /nuevo previo arranca el contrato.
   let s = await a.recibirDocumento(e, { nombre: 'LAURA GÓMEZ PÉREZ', numero: '1020345678', tipo: 'CC' });
+  assert.equal(s.nueva, true, 'una foto sin /nuevo previo arranca un contrato');
   assert.equal(e.paso, 'confirmar_documento');
+  assert.match(s.tarjeta.texto, /C\.C\. 1\.020\.345\.678/);
+
   s = await a.recibirBoton(e, boton(s, 'Sí, continuar'));
-  assert.match(s.mensajes[0]!.texto, /ya tuvo un contrato/);
   assert.equal(e.paso, 'propuesta');
-  assert.match(ultimo(s).texto, /Precio: \$1\.500\.000/);
-  assert.match(ultimo(s).texto, /Canon \(depósito\): \$500\.000/);
+  assert.match(s.tarjeta.texto, /👋 Ya tuvo un contrato antes/);
+  assert.match(s.tarjeta.texto, /Precio: \$1\.500\.000/);
+  assert.match(s.tarjeta.texto, /Canon \(depósito\): sin canon/);
+  assert.match(s.tarjeta.texto, /Contacto: 3105551234/);
 
   s = await a.recibirBoton(e, boton(s, 'Usar sugerencia'));
   assert.equal(e.paso, 'resumen', 'con un arrendatario conocido no falta nada');
@@ -103,11 +115,11 @@ test('con historial: la foto sugiere el resto y se genera en dos toques', async 
 
   s = await a.recibirBoton(e, boton(s, 'Generar'));
   const texto = textoDocx((await renderer.generar(s.generar!)).docx);
-  assert.match(texto, /QUINIENTOS MIL PESOS \(\$500\.000\) M\/cte, a título de depósito/);
+  assert.doesNotMatch(texto, /título de depósito/, 'sin canon no aparece el parágrafo');
   assert.doesNotMatch(texto, /[{}]/);
 });
 
-test('las opciones guardadas aparecen como botones y "otro valor" permite escribir', async () => {
+test('opciones guardadas, "otro valor", atrás y botones viejos', async () => {
   const catalogo = Catalogo.enMemoria({
     inmuebles: [
       { direccion: 'Calle 1 # 2-3 apto 101', usos: 3, ultimoUso: 1, ultimoPrecio: 900_000 },
@@ -122,27 +134,30 @@ test('las opciones guardadas aparecen como botones y "otro valor" permite escrib
   const e = estadoInicial();
   a.iniciar(e);
   let s = await a.recibirTexto(e, 'Pedro Ruiz Díaz 80123456');
-  // Hay historial de inmuebles: se propone; elegimos paso a paso.
   s = await a.recibirBoton(e, boton(s, 'paso a paso'));
   assert.deepEqual(
-    ultimo(s).botones!.map((f) => f.map((b) => b.texto)),
-    [['Calle 4 # 5-6 casa 2'], ['Calle 1 # 2-3 apto 101'], ['➕ Otra dirección']],
+    etiquetas(s),
+    [['Calle 4 # 5-6 casa 2'], ['Calle 1 # 2-3 apto 101'], ['➕ Otra dirección', '⬅️ Atrás']],
     'la más reciente primero, y opción de agregar otra',
   );
 
   s = await a.recibirBoton(e, boton(s, 'Calle 1'));
-  assert.equal(
-    ultimo(s).botones![0]![0]!.texto,
-    '$900.000',
-    'el precio sugerido primero es el último usado en ese inmueble',
-  );
+  assert.equal(etiquetas(s)![0]![0], '$900.000', 'primero el último precio usado en ese inmueble');
 
   const viejo = boton(s, '$900.000');
   s = await a.recibirBoton(e, boton(s, 'Otro valor'));
-  assert.match(ultimo(s).texto, /Escribe el precio/);
+  assert.match(s.tarjeta.texto, /✍️ Escribe el precio/);
   s = await a.recibirTexto(e, '950 mil');
   assert.equal(e.datos.precio_mensual, 950_000);
   assert.equal((await a.recibirBoton(e, viejo)).obsoleto, true, 'botones de pasos anteriores se ignoran');
+
+  // Atrás vuelve a la pregunta anterior y permite cambiar la respuesta.
+  assert.equal(e.paso, 'deposito');
+  s = await a.recibirBoton(e, boton(s, 'Atrás'));
+  assert.equal(e.paso, 'precio');
+  s = await a.recibirBoton(e, boton(s, '$1.200.000'));
+  assert.equal(e.datos.precio_mensual, 1_200_000);
+  assert.equal(e.paso, 'deposito');
 });
 
 test('corregir un dato desde el resumen vuelve al resumen', async () => {
@@ -174,7 +189,12 @@ test('corregir un dato desde el resumen vuelve al resumen', async () => {
   s = await a.recibirBoton(e, boton(s, 'Duración'));
   s = await a.recibirTexto(e, 'un año');
   assert.equal(e.datos.duracion_meses, 12);
-  assert.match(ultimo(s).texto, /Duración: 12 meses \(1 año\)/);
+  assert.match(s.tarjeta.texto, /Duración: 12 meses \(1 año\)/);
+  assert.match(s.tarjeta.texto, /Del 1 de noviembre de 2026 al 31 de octubre de 2027/);
+
+  s = await a.recibirTexto(e, 'hola');
+  assert.match(s.tarjeta.texto, /Usa los botones/);
+  assert.equal(e.paso, 'resumen');
 });
 
 test('foto ilegible pide otra foto o escribir los datos', async () => {
@@ -182,7 +202,7 @@ test('foto ilegible pide otra foto o escribir los datos', async () => {
   const e = estadoInicial();
   const s = await a.recibirDocumento(e, { numero: '1020', observacion: 'la foto está borrosa' });
   assert.equal(e.paso, 'documento');
-  assert.match(ultimo(s).texto, /la foto está borrosa/);
+  assert.match(s.tarjeta.texto, /la foto está borrosa/);
   await a.recibirTexto(e, 'Laura Gómez Pérez CC 1020345678');
   assert.equal(e.datos.arrendatario_numero_documento, '1020345678');
 });

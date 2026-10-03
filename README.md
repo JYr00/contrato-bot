@@ -17,10 +17,12 @@ y recibe el contrato listo en PDF y Word.
            │                                          🔐 Canon      [$500k] [Sin canon] [➕ Otro]
            │                                          📅 Duración   [3 meses] [6 meses] [➕ Otro]
            │                                          🗓️ Inicio     [Hoy] [1 del próximo mes] [➕ Otra]
-           │                                          👥 Ocupantes, 📱 celular, ✉️ correo, 📬 notificación
+           │                                          👥 Ocupantes, 📱 celular y correo, 📬 notificación
            └──────────────────────────► 📄 Resumen [✅ Generar] [✏️ Corregir] [❌ Cancelar]
 ```
 
+- **Una tarjeta por contrato:** el bot edita un solo mensaje que va mostrando lo ya respondido (con fecha de
+  fin y total a pagar al iniciar) y la pregunta actual, con botón ⬅️ Atrás. Al terminar queda como constancia.
 - **Precio** es el arriendo mensual; **canon** es el depósito que se paga una sola vez al inicio. Si no hay
   canon, el parágrafo del depósito no aparece en el contrato.
 - **Aprende de lo que usas.** Cada dirección nueva se guarda al escribirla, y al generar un contrato se guardan

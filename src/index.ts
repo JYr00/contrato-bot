@@ -27,8 +27,38 @@ const bot = new Bot(config.TELEGRAM_BOT_TOKEN);
 const teclado = (m: Mensaje) =>
   m.botones && InlineKeyboard.from(m.botones.map((fila) => fila.map((b) => InlineKeyboard.text(b.texto, b.data))));
 
-async function responder(ctx: Context, session: Session, salida: Salida) {
-  for (const m of salida.mensajes) await ctx.reply(m.texto, { reply_markup: teclado(m) });
+const noModificado = (err: unknown) => String((err as Error)?.message).includes('message is not modified');
+
+/** Edita la tarjeta en su mensaje; si ya no se puede (borrada, muy vieja), la envía de nuevo. */
+async function editarTarjeta(ctx: Context, session: Session, m: Mensaje) {
+  if (session.tarjetaId) {
+    try {
+      await ctx.api.editMessageText(session.chatId, session.tarjetaId, m.texto, { reply_markup: teclado(m) });
+      return;
+    } catch (err) {
+      if (noModificado(err)) return;
+    }
+  }
+  session.tarjetaId = (await ctx.reply(m.texto, { reply_markup: teclado(m) })).message_id;
+}
+
+/**
+ * Muestra la tarjeta del contrato en curso. Con un botón se edita en el mismo mensaje; si el usuario
+ * escribió o envió una foto, la tarjeta se vuelve a enviar abajo para que quede a la vista (la anterior se
+ * borra). Un contrato nuevo conserva la tarjeta anterior, sin botones, como constancia.
+ */
+async function mostrar(ctx: Context, session: Session, salida: Salida) {
+  const anterior = session.tarjetaId;
+  const desdeLaTarjeta = !!anterior && ctx.callbackQuery?.message?.message_id === anterior;
+
+  if (desdeLaTarjeta && !salida.nueva) {
+    await editarTarjeta(ctx, session, salida.tarjeta);
+  } else {
+    if (anterior && salida.nueva) await ctx.api.editMessageReplyMarkup(session.chatId, anterior).catch(() => undefined);
+    else if (anterior) await ctx.api.deleteMessage(session.chatId, anterior).catch(() => undefined);
+    session.tarjetaId = (await ctx.reply(salida.tarjeta.texto, { reply_markup: teclado(salida.tarjeta) })).message_id;
+  }
+
   if (salida.generar) await generar(ctx, session, salida.generar);
   await sesiones.save(session);
 }
@@ -40,12 +70,13 @@ async function generar(ctx: Context, session: Session, datos: DatosContrato) {
     if (contrato.pdf) await ctx.replyWithDocument(new InputFile(contrato.pdf, `${contrato.nombreBase}.pdf`));
     await ctx.replyWithDocument(new InputFile(contrato.docx, `${contrato.nombreBase}.docx`));
     await catalogo.registrarContrato(datos);
-    await ctx.reply('✅ Listo. Imprímelo y fírmenlo ambas partes.\n\nPara otro contrato, envía la foto de la siguiente cédula 📷');
+    await editarTarjeta(ctx, session, asistente.generado(session.estado));
     console.log(`[chat ${session.chatId}] Contrato generado: ${contrato.nombreBase}`);
   } catch (err) {
     console.error(`[chat ${session.chatId}] Error generando el contrato:`, err);
     session.estado.paso = 'resumen';
-    await ctx.reply('Tuve un problema generando el contrato. Intenta de nuevo con el botón ✅ Generar contrato.');
+    const salida = asistente.actual(session.estado, '⚠️ Tuve un problema generando el contrato. Intenta de nuevo.');
+    await editarTarjeta(ctx, session, salida.tarjeta);
   }
 }
 
@@ -79,10 +110,14 @@ bot.use(async (ctx, next) => {
 
 bot.command(['start', 'nuevo'], async (ctx) => {
   const session = await sesiones.get(ctx.chat.id);
-  await responder(ctx, session, asistente.iniciar(session.estado));
+  await mostrar(ctx, session, asistente.iniciar(session.estado));
 });
 
 bot.command('cancelar', async (ctx) => {
+  const session = await sesiones.get(ctx.chat.id);
+  if (session.tarjetaId && session.estado.paso !== 'listo') {
+    await ctx.api.editMessageText(ctx.chat.id, session.tarjetaId, '❌ Contrato cancelado.').catch(() => undefined);
+  }
   await sesiones.reset(ctx.chat.id);
   await ctx.reply('Listo, descarté el contrato en curso. Envía una foto de cédula o escribe /nuevo para empezar otro.');
 });
@@ -93,9 +128,11 @@ bot.on(['message:photo', 'message:document'], async (ctx) => {
   try {
     const imagen = await descargarImagen(ctx);
     if (typeof imagen === 'string') return void (await ctx.reply(imagen));
-    await ctx.reply('🔎 Leyendo el documento…');
-    const doc = await lector.leer(imagen.datos, imagen.tipo);
-    await responder(ctx, session, await asistente.recibirDocumento(session.estado, doc));
+    const leyendo = await ctx.reply('🔎 Leyendo el documento…');
+    const doc = await lector.leer(imagen.datos, imagen.tipo).finally(() =>
+      ctx.api.deleteMessage(ctx.chat.id, leyendo.message_id).catch(() => undefined),
+    );
+    await mostrar(ctx, session, await asistente.recibirDocumento(session.estado, doc));
   } catch (err) {
     console.error(`[chat ${session.chatId}] Error leyendo el documento:`, err);
     await ctx.reply('No pude leer la imagen. Intenta otra vez o escribe el nombre y número. Ej.: Laura Gómez Pérez CC 1020345678');
@@ -104,23 +141,15 @@ bot.on(['message:photo', 'message:document'], async (ctx) => {
 
 bot.on('message:text', async (ctx) => {
   const session = await sesiones.get(ctx.chat.id);
-  await responder(ctx, session, await asistente.recibirTexto(session.estado, ctx.message.text));
+  await mostrar(ctx, session, await asistente.recibirTexto(session.estado, ctx.message.text));
 });
 
 bot.on('callback_query:data', async (ctx) => {
   const session = await sesiones.get(ctx.chat!.id);
-  const data = ctx.callbackQuery.data;
-  const salida = await asistente.recibirBoton(session.estado, data);
+  const salida = await asistente.recibirBoton(session.estado, ctx.callbackQuery.data);
   if (salida.obsoleto) return ctx.answerCallbackQuery({ text: 'Ese botón ya no está activo.' });
   await ctx.answerCallbackQuery();
-
-  // Deja constancia de lo elegido y quita los botones del mensaje anterior.
-  const mensaje = ctx.callbackQuery.message;
-  const elegido = mensaje?.reply_markup?.inline_keyboard.flat().find((b) => 'callback_data' in b && b.callback_data === data);
-  if (mensaje && 'text' in mensaje && mensaje.text) {
-    await ctx.editMessageText(`${mensaje.text}\n\n✔️ ${elegido?.text ?? ''}`).catch(() => undefined);
-  }
-  await responder(ctx, session, salida);
+  await mostrar(ctx, session, salida);
 });
 
 bot.on('message', (ctx) => ctx.reply('Envía una foto de la cédula del arrendatario o escribe /nuevo 🙂'));

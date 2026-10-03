@@ -31,6 +31,9 @@ y recibe el contrato listo en PDF y Word.
 - **Aprende de lo que usas.** Cada dirección nueva se guarda al escribirla, y al generar un contrato se guardan
   precio, canon, duración y los datos del arrendatario (`data/catalogo.json`). Los botones muestran primero lo
   más reciente; el precio sugerido es el último usado en ese inmueble.
+- **Varios arrendatarios:** se envía una cédula por persona (hasta 4). Desde la segunda, el bot pregunta
+  "👥 Agregar como otro arrendatario" o "🔄 Reemplazar". Todos aparecen en el encabezado, se obligan
+  solidariamente y firman; las notificaciones van al principal. Se quitan desde ✏️ Corregir.
 - **Renovar:** `/renovar` lista los últimos contratos (el que vence primero arriba); al elegir uno, el nuevo
   contrato copia todo, empieza el día siguiente al vencimiento y va sin canon (ya se entregó). Enviar la foto
   de un arrendatario con contrato anterior propone lo mismo.

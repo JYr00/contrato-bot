@@ -3,6 +3,7 @@ import {
   ABREVIATURA_DOCUMENTO,
   CAMPOS,
   ETIQUETAS,
+  MAX_COARRENDATARIOS,
   TIPOS_DOCUMENTO,
   VALORES_POR_DEFECTO,
   estaCompleto,
@@ -53,6 +54,7 @@ export type Paso =
   | PasoDato
   | 'resumen'
   | 'corregir'
+  | 'coarrendatarios'
   | 'listo';
 
 type TipoDocumento = DatosContrato['arrendatario_tipo_documento'];
@@ -75,6 +77,8 @@ export interface EstadoAsistente {
   propuesta?: Datos;
   /** Edificio elegido (dirección sin apartamento), mientras se pregunta el apartamento. */
   edificio?: string;
+  /** Se pidió corregir al arrendatario principal: la próxima cédula lo reemplaza. */
+  reemplazarPrincipal?: boolean;
   /** true cuando se está corrigiendo un dato desde el resumen. */
   volverAResumen: boolean;
 }
@@ -128,6 +132,7 @@ export function estadoInicial(): EstadoAsistente {
     documento: undefined,
     propuesta: undefined,
     edificio: undefined,
+    reemplazarPrincipal: undefined,
     volverAResumen: false,
   };
 }
@@ -137,7 +142,9 @@ export function estadoInicial(): EstadoAsistente {
 const pesos = (n: number) => `$${formatoMiles(n)}`;
 const meses = (n: number) =>
   n === 1 ? '1 mes' : n % 12 === 0 ? `${n} meses (${n / 12} ${n === 12 ? 'año' : 'años'})` : `${n} meses`;
-const personas = (n: number) => (n === 1 ? '1 persona' : `${n} personas`);
+const personasTexto = (n: number) => (n === 1 ? '1 persona' : `${n} personas`);
+/** Arrendatarios del contrato: el principal y los co-arrendatarios. */
+const personas = (d: Partial<DatosContrato>) => 1 + (d.coarrendatarios?.length ?? 0);
 const documento = (tipo: TipoDocumento, numero: string) =>
   `${ABREVIATURA_DOCUMENTO[tipo]} ${/^\d+$/.test(numero) ? formatoMiles(Number(numero)) : numero}`;
 const contacto = (d: Datos) =>
@@ -164,6 +171,7 @@ export function describir(d: Datos): string {
   const lineas = [
     d.arrendatario_nombre &&
       `👤 ${d.arrendatario_nombre} · ${documento(d.arrendatario_tipo_documento!, d.arrendatario_numero_documento!)}`,
+    ...(d.coarrendatarios ?? []).map((p) => `👥 ${p.nombre} · ${documento(p.tipo, p.numero)}`),
     d.inmueble_direccion && `🏠 ${d.inmueble_direccion}`,
     d.precio_mensual && `💰 Precio: ${pesos(d.precio_mensual)} mensuales`,
     d.deposito !== undefined && `🔐 Canon (depósito): ${d.deposito ? pesos(d.deposito) : 'sin canon'}`,
@@ -172,7 +180,7 @@ export function describir(d: Datos): string {
       `💵 Al iniciar: ${pesos(d.precio_mensual + d.deposito)} (primer mes + canon)`,
     d.duracion_meses && `📅 Duración: ${meses(d.duracion_meses)}`,
     periodo,
-    d.numero_ocupantes && `👥 Ocupantes: ${personas(d.numero_ocupantes)}`,
+    d.numero_ocupantes && `👨‍👩‍👧 Ocupantes: ${personasTexto(d.numero_ocupantes)}`,
     (d.arrendatario_celular !== undefined || d.arrendatario_correo !== undefined) && `📱 Contacto: ${contacto(d)}`,
     d.arrendatario_direccion && `📬 Notificaciones: ${d.arrendatario_direccion}`,
   ];
@@ -304,7 +312,8 @@ const PREGUNTAS: Record<PasoDato, Pregunta> = {
     otro: '➕ Otro',
     porFila: 4,
     opciones: (c) =>
-      unicos([previo(c)?.ocupantes, 1, 2, 3, 4])
+      unicos([previo(c)?.ocupantes, ...[0, 1, 2, 3].map((i) => personas(c.datos) + i)])
+        .filter((n) => n >= personas(c.datos))
         .slice(0, 4)
         .sort((x, y) => x - y)
         .map((n) => ({ etiqueta: String(n), valor: { numero_ocupantes: n } })),
@@ -418,6 +427,8 @@ export class Asistente {
         return this.resumen(e, avisos);
       case 'corregir':
         return this.menuCorregir(e, avisos);
+      case 'coarrendatarios':
+        return this.menuCoarrendatarios(e, avisos);
       default:
         return this.preguntar(e, e.paso, avisos);
     }
@@ -437,6 +448,10 @@ export class Asistente {
     const nueva = e.paso === 'inicio' || e.paso === 'listo';
     if (nueva) this.iniciar(e);
 
+    // Dos cédulas seguidas (p. ej. un álbum): la anterior, aún sin confirmar, se da por buena.
+    const avisos: string[] = [];
+    if (e.paso === 'confirmar_documento' && e.documento) avisos.push(this.incorporarPendiente(e));
+
     if (!doc.nombre || !doc.numero || doc.observacion) {
       e.paso = 'documento';
       const leido = [doc.nombre && `Nombre: ${doc.nombre}`, doc.numero && `Número: ${doc.numero}`].filter(Boolean);
@@ -445,12 +460,12 @@ export class Asistente {
         (doc.observacion ? ` (${doc.observacion})` : '') +
         '.' +
         (leido.length ? `\nAlcancé a leer:\n${leido.join('\n')}` : '');
-      return { tarjeta: this.tarjeta(e, `Envía otra foto más nítida o escribe el nombre y el número. Ej.: ${EJEMPLO_DOCUMENTO}`, undefined, [aviso]), nueva };
+      return { tarjeta: this.tarjeta(e, `Envía otra foto más nítida o escribe el nombre y el número. Ej.: ${EJEMPLO_DOCUMENTO}`, undefined, [...avisos, aviso]), nueva };
     }
 
     e.documento = { ...doc, tipo: doc.tipo ?? 'CC' };
     e.paso = 'confirmar_documento';
-    return { ...this.confirmacionDocumento(e), nueva };
+    return { ...this.confirmacionDocumento(e, avisos), nueva };
   }
 
   async recibirTexto(e: EstadoAsistente, texto: string): Promise<Salida> {
@@ -477,6 +492,7 @@ export class Asistente {
       case 'propuesta':
       case 'resumen':
       case 'corregir':
+      case 'coarrendatarios':
         // Correcciones escritas: "cambia el precio a 800 mil".
         return (await this.interpretarLibre(e, texto)) ?? this.actual(e, '👇 Usa los botones o escribe qué cambiar.');
       default: {
@@ -511,6 +527,7 @@ export class Asistente {
 
       case 'confirmar_documento':
         if (accion === 'ok' && e.documento) return this.confirmarDocumento(e, e.documento);
+        if (accion === 'agregar' && e.documento) return this.agregarCoarrendatario(e, e.documento);
         e.paso = 'documento';
         return { tarjeta: this.tarjeta(e, `✏️ Escribe el nombre completo y el número del documento. Ej.: ${EJEMPLO_DOCUMENTO}`) };
 
@@ -541,9 +558,20 @@ export class Asistente {
         if (accion === 'volver') return this.resumen(e);
         if (accion === 'documento') {
           e.paso = 'documento';
+          e.reemplazarPrincipal = true;
           return { tarjeta: this.tarjeta(e, PEDIR_DOCUMENTO) };
         }
+        if (accion === 'coarrendatarios') return this.menuCoarrendatarios(e);
         return esPasoDato(accion) ? this.preguntar(e, accion) : this.resumen(e);
+
+      case 'coarrendatarios': {
+        const i = Number(accion.slice(1));
+        const quitado = accion.startsWith('q') ? e.datos.coarrendatarios?.[i] : undefined;
+        if (!quitado) return this.resumen(e);
+        e.datos.coarrendatarios = e.datos.coarrendatarios!.filter((_, j) => j !== i);
+        const aviso = `🗑 Quité a ${quitado.nombre}.`;
+        return e.datos.coarrendatarios.length ? this.menuCoarrendatarios(e, [aviso]) : this.resumen(e, [aviso]);
+      }
 
       default: {
         if (!esPasoDato(e.paso)) return obsoleto();
@@ -571,7 +599,11 @@ export class Asistente {
       return { tarjeta: this.tarjeta(e, `Escribe el nombre y número correctos. Ej.: ${EJEMPLO_DOCUMENTO}`, undefined, [`⚠️ ${problemas.join(' ')}`]) };
     }
     Object.assign(e.datos, guardados);
+    e.datos.coarrendatarios = (e.datos.coarrendatarios ?? []).filter(
+      (p) => p.numero !== guardados.arrendatario_numero_documento,
+    );
     e.documento = undefined;
+    e.reemplazarPrincipal = false;
 
     const yaConocido = this.catalogo.arrendatario(guardados.arrendatario_numero_documento!);
     const avisos = yaConocido ? ['👋 Ya tuvo un contrato antes; te sugiero sus datos anteriores.'] : [];
@@ -674,7 +706,10 @@ export class Asistente {
     ];
     if (anterior.deposito > 0) avisos.push('🔐 Sin canon: ya se entregó en el contrato anterior. Corrígelo si aplica.');
     if (inicio < this.hoy()) avisos.push('⚠️ La fecha de inicio ya pasó; corrígela si el nuevo contrato empieza después.');
-    return { datos: { ...anterior, fecha_inicio: inicio, deposito: 0 }, avisos };
+    return {
+      datos: { ...anterior, coarrendatarios: anterior.coarrendatarios ?? [], fecha_inicio: inicio, deposito: 0 },
+      avisos,
+    };
   }
 
   /** Sugerencia completa con lo usado antes. Solo si hay al menos inmueble y precio para sugerir. */
@@ -710,6 +745,9 @@ export class Asistente {
     const { guardados, errores } = validarParcial(valor);
     const problemas = Object.values(errores);
     if (problemas.length) return this.preguntar(e, paso, problemas.map((p) => `⚠️ ${p}`), true);
+    if (guardados.numero_ocupantes !== undefined && guardados.numero_ocupantes < personas(e.datos)) {
+      return this.preguntar(e, paso, [`⚠️ Son ${personas(e.datos)} arrendatarios: los ocupantes no pueden ser menos.`], true);
+    }
 
     const avisos: string[] = [];
 
@@ -800,7 +838,12 @@ export class Asistente {
     e.volverAResumen = false;
     return {
       tarjeta: {
-        texto: this.componer('📄 Resumen del contrato', describir(e.datos), avisos, '¿Genero el contrato?'),
+        texto: this.componer(
+          '📄 Resumen del contrato',
+          describir(e.datos),
+          avisos,
+          '¿Genero el contrato?\n📷 ¿Otro arrendatario? Envía su cédula.',
+        ),
         botones: [
           [{ texto: '✅ Generar contrato', data: 'resumen:generar' }],
           [
@@ -817,15 +860,20 @@ export class Asistente {
     const leido =
       `🪪 Leí este documento:\n\n${d.nombre}\n` +
       `${TIPOS_DOCUMENTO[d.tipo ?? 'CC']}: ${documento(d.tipo ?? 'CC', d.numero!.replace(/[.\s-]/g, ''))}\n\n` +
-      '¿Está correcto? Revisa bien el número.';
-    return {
-      tarjeta: this.tarjeta(e, leido, [
-        [
-          { texto: '✅ Sí, continuar', data: 'confirmar_documento:ok' },
-          { texto: '✏️ Corregir', data: 'confirmar_documento:editar' },
-        ],
-      ], avisos),
-    };
+      (this.hayPrincipal(e) ? '¿Es otro arrendatario de este contrato? Revisa bien el número.' : '¿Está correcto? Revisa bien el número.');
+    const botones: Boton[][] = this.hayPrincipal(e)
+      ? [
+          [{ texto: '👥 Agregar como otro arrendatario', data: 'confirmar_documento:agregar' }],
+          [{ texto: `🔄 Reemplazar a ${e.datos.arrendatario_nombre!.split(' ')[0]}`, data: 'confirmar_documento:ok' }],
+          [{ texto: '✏️ Corregir', data: 'confirmar_documento:editar' }],
+        ]
+      : [
+          [
+            { texto: '✅ Sí, continuar', data: 'confirmar_documento:ok' },
+            { texto: '✏️ Corregir', data: 'confirmar_documento:editar' },
+          ],
+        ];
+    return { tarjeta: this.tarjeta(e, leido, botones, avisos) };
   }
 
   private mostrarPropuesta(e: EstadoAsistente, avisos: string[] = []): Salida {
@@ -847,13 +895,99 @@ export class Asistente {
 
   private menuCorregir(e: EstadoAsistente, avisos: string[] = []): Salida {
     e.paso = 'corregir';
-    const filas: Boton[][] = [[{ texto: '🪪 Arrendatario', data: 'corregir:documento' }]];
+    const conCo = !!e.datos.coarrendatarios?.length;
+    const filas: Boton[][] = [[{ texto: conCo ? '🪪 Arrendatario principal' : '🪪 Arrendatario', data: 'corregir:documento' }]];
+    if (conCo) filas.push([{ texto: '👥 Quitar co-arrendatario', data: 'corregir:coarrendatarios' }]);
     const corregibles = ORDEN.filter((p) => p !== 'unidad'); // el apartamento se corrige desde "Inmueble"
     for (let i = 0; i < corregibles.length; i += 2) {
       filas.push(corregibles.slice(i, i + 2).map((p) => ({ texto: PREGUNTAS[p].titulo, data: `corregir:${p}` })));
     }
     filas.push([{ texto: '↩️ Volver al resumen', data: 'corregir:volver' }]);
     return { tarjeta: { texto: this.componer('📄 Resumen del contrato', describir(e.datos), avisos, '✏️ ¿Qué quieres corregir?'), botones: filas } };
+  }
+
+  private menuCoarrendatarios(e: EstadoAsistente, avisos: string[] = []): Salida {
+    e.paso = 'coarrendatarios';
+    const filas: Boton[][] = (e.datos.coarrendatarios ?? []).map((p, i) => [
+      { texto: `🗑 ${p.nombre}`, data: `coarrendatarios:q${i}` },
+    ]);
+    filas.push([{ texto: '↩️ Volver al resumen', data: 'coarrendatarios:volver' }]);
+    return {
+      tarjeta: {
+        texto: this.componer('📄 Resumen del contrato', describir(e.datos), avisos, '👥 ¿A quién quito del contrato?'),
+        botones: filas,
+      },
+    };
+  }
+
+  /** Hay arrendatario principal y no se está corrigiendo: una cédula nueva puede ser otro arrendatario. */
+  private hayPrincipal(e: EstadoAsistente): boolean {
+    return !!e.datos.arrendatario_numero_documento && !e.reemplazarPrincipal;
+  }
+
+  private validarPersona(doc: DocumentoDetectado): { nombre: string; tipo: TipoDocumento; numero: string } | string {
+    const { guardados, errores } = validarParcial({
+      arrendatario_nombre: doc.nombre,
+      arrendatario_tipo_documento: doc.tipo ?? 'CC',
+      arrendatario_numero_documento: doc.numero,
+    });
+    const problemas = Object.values(errores);
+    if (problemas.length) return problemas.join(' ');
+    return {
+      nombre: guardados.arrendatario_nombre!,
+      tipo: guardados.arrendatario_tipo_documento!,
+      numero: guardados.arrendatario_numero_documento!,
+    };
+  }
+
+  /** Suma una persona como co-arrendatario. Devuelve el aviso a mostrar. */
+  private sumarCoarrendatario(e: EstadoAsistente, doc: DocumentoDetectado): string {
+    const p = this.validarPersona(doc);
+    if (typeof p === 'string') return `⚠️ ${doc.nombre ?? 'Documento'}: ${p}`;
+    const lista = e.datos.coarrendatarios ?? [];
+    if (p.numero === e.datos.arrendatario_numero_documento || lista.some((c) => c.numero === p.numero)) {
+      return `⚠️ ${p.nombre} ya está en el contrato.`;
+    }
+    if (lista.length >= MAX_COARRENDATARIOS) return `⚠️ Máximo ${MAX_COARRENDATARIOS} co-arrendatarios; no agregué a ${p.nombre}.`;
+    e.datos.coarrendatarios = [...lista, p];
+    return `👥 Agregué a ${p.nombre} como arrendatario.`;
+  }
+
+  private async agregarCoarrendatario(e: EstadoAsistente, doc: DocumentoDetectado): Promise<Salida> {
+    const aviso = this.sumarCoarrendatario(e, doc);
+    e.documento = undefined;
+    return this.continuar(e, [aviso]);
+  }
+
+  /** Cédula pendiente de confirmar cuando llega otra: principal si no hay, si no co-arrendatario. */
+  private incorporarPendiente(e: EstadoAsistente): string {
+    const doc = e.documento!;
+    e.documento = undefined;
+    if (this.hayPrincipal(e)) return this.sumarCoarrendatario(e, doc);
+    const p = this.validarPersona(doc);
+    if (typeof p === 'string') return `⚠️ ${doc.nombre ?? 'Documento'}: ${p}`;
+    e.datos.arrendatario_nombre = p.nombre;
+    e.datos.arrendatario_tipo_documento = p.tipo;
+    e.datos.arrendatario_numero_documento = p.numero;
+    e.reemplazarPrincipal = false;
+    return `🪪 Arrendatario: ${p.nombre}.`;
+  }
+
+  /** Sigue donde iba el contrato después de agregar a alguien. */
+  private continuar(e: EstadoAsistente, avisos: string[]): Salida {
+    if (e.propuesta) {
+      e.paso = 'propuesta';
+      return this.mostrarPropuesta(e, avisos);
+    }
+    if (!e.datos.inmueble_direccion && !e.volverAResumen) {
+      const propuesta = this.proponer(e);
+      if (propuesta) {
+        e.propuesta = propuesta;
+        e.paso = 'propuesta';
+        return this.mostrarPropuesta(e, avisos);
+      }
+    }
+    return this.avanzar(e, avisos);
   }
 
   private contexto(e: EstadoAsistente): Contexto {

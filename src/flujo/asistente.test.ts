@@ -84,6 +84,7 @@ test('arrendatario conocido: la foto propone renovar y se genera en dos toques',
     arrendatario_nombre: 'LAURA GÓMEZ PÉREZ',
     arrendatario_tipo_documento: 'CC',
     arrendatario_numero_documento: '1020345678',
+    coarrendatarios: [],
     inmueble_direccion: 'Carrera 105 i 67 d 31 apto 201',
     precio_mensual: 1_500_000,
     deposito: 300_000,
@@ -257,6 +258,7 @@ test('/renovar: lista contratos por vencimiento y el elegido va directo al resum
   const catalogo = Catalogo.enMemoria();
   const base = {
     arrendatario_tipo_documento: 'CC' as const,
+    coarrendatarios: [],
     precio_mensual: 900_000,
     deposito: 0,
     duracion_meses: 6,
@@ -410,4 +412,169 @@ test('mensaje libre: el apartamento queda en el formato de siempre aunque llegue
   await a.recibirTexto(e, 'el de la 105 apto 302 a 1.2 millones por un año');
   assert.equal(e.datos.inmueble_direccion, 'Carrera 105 i 67 d 31 apto 302, Bogotá');
   assert.equal(e.paso, 'deposito');
+});
+
+// --- Co-arrendatarios ---------------------------------------------------------------------------
+
+const contratoBase = {
+  arrendatario_nombre: 'LAURA GÓMEZ PÉREZ',
+  arrendatario_tipo_documento: 'CC' as const,
+  arrendatario_numero_documento: '1020345678',
+  coarrendatarios: [] as { nombre: string; tipo: 'CC' | 'CE' | 'PA' | 'PPT'; numero: string }[],
+  inmueble_direccion: 'Carrera 105 i 67 d 31 apto 201, Bogotá',
+  precio_mensual: 1_500_000,
+  deposito: 0,
+  duracion_meses: 6,
+  fecha_inicio: '2026-11-01',
+  numero_ocupantes: 3,
+  arrendatario_celular: '',
+  arrendatario_correo: '',
+  arrendatario_direccion: 'Carrera 105 i 67 d 31 apto 201, Bogotá',
+  numero_ejemplares: 2,
+};
+const lineasDeFirma = (t: string) => t.match(/______________________________/g)!.length;
+
+test('contrato con un arrendatario: encabezado igual que antes y sin firmas extra', async () => {
+  const texto = textoDocx((await renderer.generar(contratoBase)).docx);
+  assert.match(
+    texto,
+    /LAURA GÓMEZ PÉREZ, identificado con cédula de ciudadanía No\. 1\.020\.345\.678, quien para efectos de este contrato obra en nombre propio y se denominará EL ARRENDATARIO, manifestaron/,
+  );
+  assert.equal(lineasDeFirma(texto), 2, 'solo arrendador y arrendatario');
+  assert.doesNotMatch(texto, /solidariamente y se denominarán/);
+  assert.doesNotMatch(texto, /[{}]/);
+});
+
+test('contrato con co-arrendatarios: todos en el encabezado, solidarios, y con su firma', async () => {
+  const datos = {
+    ...contratoBase,
+    coarrendatarios: [
+      { nombre: 'PEDRO RUIZ DÍAZ', tipo: 'CC' as const, numero: '80123456' },
+      { nombre: 'ANA MARÍA LÓPEZ', tipo: 'CE' as const, numero: '987654' },
+    ],
+  };
+  const texto = textoDocx((await renderer.generar(datos)).docx);
+  assert.match(
+    texto,
+    /LAURA GÓMEZ PÉREZ, identificado con cédula de ciudadanía No\. 1\.020\.345\.678, PEDRO RUIZ DÍAZ, identificado con cédula de ciudadanía No\. 80\.123\.456, y ANA MARÍA LÓPEZ, identificado con cédula de extranjería No\. 987\.654, quienes para efectos de este contrato obran en nombre propio, se obligan solidariamente y se denominarán EL ARRENDATARIO, manifestaron/,
+  );
+  assert.match(texto, /PEDRO RUIZ DÍAZC\.C\. 80\.123\.456/, 'firma de Pedro');
+  assert.match(texto, /ANA MARÍA LÓPEZC\.E\. 987\.654/, 'firma de Ana');
+  assert.equal(lineasDeFirma(texto), 4, 'una línea de firma más por co-arrendatario');
+  assert.doesNotMatch(texto, /[{}]/);
+});
+
+const LAURA = { nombre: 'LAURA GÓMEZ PÉREZ', numero: '1020345678', tipo: 'CC' as const };
+const PEDRO = { nombre: 'PEDRO RUIZ DÍAZ', numero: '80123456', tipo: 'CC' as const };
+
+test('segunda cédula: se agrega como co-arrendatario y se sigue donde iba', async () => {
+  const a = new Asistente(Catalogo.enMemoria(), () => HOY);
+  const e = estadoInicial();
+  let s = await a.recibirDocumento(e, LAURA);
+  s = await a.recibirBoton(e, boton(s, 'Sí, continuar'));
+  assert.equal(e.paso, 'inmueble');
+
+  s = await a.recibirDocumento(e, PEDRO);
+  assert.equal(s.nueva, false);
+  assert.match(s.tarjeta.texto, /¿Es otro arrendatario de este contrato\?/);
+  assert.deepEqual(etiquetas(s), [['👥 Agregar como otro arrendatario'], ['🔄 Reemplazar a LAURA'], ['✏️ Corregir']]);
+
+  s = await a.recibirBoton(e, boton(s, 'Agregar como otro'));
+  assert.deepEqual(e.datos.coarrendatarios, [{ nombre: 'PEDRO RUIZ DÍAZ', tipo: 'CC', numero: '80123456' }]);
+  assert.match(s.tarjeta.texto, /👥 Agregué a PEDRO RUIZ DÍAZ como arrendatario/);
+  assert.match(s.tarjeta.texto, /👥 PEDRO RUIZ DÍAZ · C\.C\. 80\.123\.456/);
+  assert.equal(e.paso, 'inmueble', 'vuelve a la pregunta en curso');
+
+  // La misma cédula otra vez no se duplica.
+  s = await a.recibirDocumento(e, PEDRO);
+  s = await a.recibirBoton(e, boton(s, 'Agregar como otro'));
+  assert.equal(e.datos.coarrendatarios!.length, 1);
+  assert.match(s.tarjeta.texto, /ya está en el contrato/);
+});
+
+test('reemplazar al principal lo saca de los co-arrendatarios si estaba', async () => {
+  const a = new Asistente(Catalogo.enMemoria(), () => HOY);
+  const e = estadoInicial();
+  let s = await a.recibirDocumento(e, LAURA);
+  s = await a.recibirBoton(e, boton(s, 'Sí, continuar'));
+  s = await a.recibirDocumento(e, PEDRO);
+  s = await a.recibirBoton(e, boton(s, 'Agregar como otro'));
+  s = await a.recibirDocumento(e, PEDRO);
+  s = await a.recibirBoton(e, boton(s, 'Reemplazar a LAURA'));
+  assert.equal(e.datos.arrendatario_nombre, 'PEDRO RUIZ DÍAZ');
+  assert.deepEqual(e.datos.coarrendatarios, []);
+});
+
+test('dos fotos seguidas: la primera queda como principal y la segunda se puede agregar', async () => {
+  const a = new Asistente(Catalogo.enMemoria(), () => HOY);
+  const e = estadoInicial();
+  await a.recibirDocumento(e, LAURA);
+  const s = await a.recibirDocumento(e, PEDRO);
+  assert.equal(e.datos.arrendatario_nombre, 'LAURA GÓMEZ PÉREZ');
+  assert.match(s.tarjeta.texto, /🪪 Arrendatario: LAURA GÓMEZ PÉREZ\./);
+  assert.equal(e.documento?.numero, '80123456');
+  await a.recibirBoton(e, boton(s, 'Agregar como otro'));
+  assert.equal(e.datos.coarrendatarios!.length, 1);
+});
+
+test('máximo de co-arrendatarios', async () => {
+  const a = new Asistente(Catalogo.enMemoria(), () => HOY);
+  const e = estadoInicial();
+  let s = await a.recibirDocumento(e, LAURA);
+  s = await a.recibirBoton(e, boton(s, 'Sí, continuar'));
+  for (const [i, n] of ['11111111', '22222222', '33333333', '44444444'].entries()) {
+    s = await a.recibirDocumento(e, { nombre: ['ANA RUIZ', 'JUAN PAZ', 'LUIS MORA', 'EVA SOTO'][i], numero: n, tipo: 'CC' });
+    s = await a.recibirBoton(e, boton(s, 'Agregar como otro'));
+  }
+  assert.equal(e.datos.coarrendatarios!.length, 3);
+  assert.match(s.tarjeta.texto, /Máximo 3 co-arrendatarios/);
+});
+
+test('corregir: quitar co-arrendatario, y ocupantes no menos que arrendatarios', async () => {
+  const a = new Asistente(Catalogo.enMemoria(), () => HOY);
+  const e = estadoInicial();
+  const { numero_ocupantes: _, ...sinOcupantes } = contratoBase;
+  Object.assign(e.datos, {
+    ...sinOcupantes,
+    coarrendatarios: [{ nombre: 'PEDRO RUIZ DÍAZ', tipo: 'CC', numero: '80123456' }],
+  });
+  e.paso = 'resumen';
+  let s = await a.recibirBoton(e, 'resumen:generar'); // falta ocupantes: lo pregunta
+  assert.equal(e.paso, 'ocupantes');
+  assert.equal(etiquetas(s)![0]![0], '2', 'las opciones empiezan en el número de arrendatarios');
+  s = await a.recibirTexto(e, '1');
+  assert.match(s.tarjeta.texto, /Son 2 arrendatarios: los ocupantes no pueden ser menos/);
+  s = await a.recibirTexto(e, '2');
+  assert.equal(e.paso, 'resumen');
+  assert.match(s.tarjeta.texto, /¿Otro arrendatario\? Envía su cédula/);
+
+  s = await a.recibirBoton(e, 'resumen:corregir');
+  assert.ok(etiquetas(s)!.flat().includes('🪪 Arrendatario principal'));
+  s = await a.recibirBoton(e, boton(s, 'Quitar co-arrendatario'));
+  s = await a.recibirBoton(e, boton(s, 'PEDRO'));
+  assert.deepEqual(e.datos.coarrendatarios, []);
+  assert.equal(e.paso, 'resumen');
+  assert.match(s.tarjeta.texto, /🗑 Quité a PEDRO RUIZ DÍAZ/);
+});
+
+test('renovar un contrato guardado antes de los co-arrendatarios', async () => {
+  const { coarrendatarios: _, ...viejo } = contratoBase;
+  const catalogo = Catalogo.enMemoria({
+    arrendatarios: {
+      '1020345678': {
+        tipo: 'CC',
+        numero: '1020345678',
+        nombre: 'LAURA GÓMEZ PÉREZ',
+        ultimoUso: 1,
+        ultimoContrato: viejo as typeof contratoBase,
+      },
+    },
+  });
+  const a = new Asistente(catalogo, () => HOY);
+  const e = estadoInicial();
+  let s = a.renovar(e);
+  s = await a.recibirBoton(e, boton(s, 'LAURA'));
+  assert.deepEqual(e.datos.coarrendatarios, []);
+  s = await a.recibirBoton(e, boton(s, 'Generar'));
+  assert.ok(s.generar, 'se puede generar');
 });

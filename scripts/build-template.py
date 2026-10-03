@@ -62,9 +62,8 @@ t.paragraph_format.space_after = Pt(12)
 
 p("", "MARIO A. ROJAS RODELO, con domicilio en la ciudad de BOGOTÁ, identificado con cédula de "
   "ciudadanía No. 80.101.225, quien obra en nombre propio y que para efectos de este contrato se "
-  "denominará “EL ARRENDADOR”, por una parte, y por la otra, {arrendatario_nombre}, identificado "
-  "con {arrendatario_identificacion}, quien para efectos de este contrato obra en nombre propio y se "
-  "denominará EL ARRENDATARIO, manifestaron que han decidido celebrar un contrato de arrendamiento "
+  "denominará “EL ARRENDADOR”, por una parte, y por la otra, {arrendatarios_texto} EL ARRENDATARIO, "
+  "manifestaron que han decidido celebrar un contrato de arrendamiento "
   "de bien inmueble destinado a vivienda, en adelante el “Contrato”, el cual se rige por la Ley 820 "
   "de 2003 y por las siguientes cláusulas:")
 
@@ -350,6 +349,24 @@ for r, (izq, der) in enumerate(contenido):
         run = par.add_run(texto)
         run.bold = r == 1
 mantener_junta(firmas)
+
+# Firmas de los co-arrendatarios: el bloque se repite por cada uno (docxtemplater elimina los párrafos
+# de apertura y cierre del ciclo) y queda junto a la tabla de firmas.
+p("", "{#coarrendatarios}").paragraph_format.keep_with_next = True
+for texto, negrita in [
+    ("", False),
+    ("", False),
+    ("______________________________", False),
+    ("EL ARRENDATARIO", True),
+    ("{nombre}", False),
+    ("{documento_firma}", False),
+]:
+    par = p("", align=WD_ALIGN_PARAGRAPH.CENTER)
+    par.paragraph_format.space_after = Pt(0)
+    par.paragraph_format.keep_with_next = True
+    if texto:
+        par.add_run(texto).bold = negrita
+p("", "{/coarrendatarios}")
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
 doc.save(OUT)

@@ -24,18 +24,41 @@ export interface ContratoGenerado {
   pdf: Buffer | null;
 }
 
+type Persona = { nombre: string; tipo: DatosContrato['arrendatario_tipo_documento']; numero: string };
+
+const numeroLegible = (n: string) => (/^\d+$/.test(n) ? formatoMiles(Number(n)) : n);
+const identificacion = (p: Persona) => `${TIPOS_DOCUMENTO[p.tipo]} No. ${numeroLegible(p.numero)}`;
+const documentoFirma = (p: Persona) => `${ABREVIATURA_DOCUMENTO[p.tipo]} ${numeroLegible(p.numero)}`;
+
+/**
+ * Comparecencia de los arrendatarios en el encabezado, hasta "se denominará(n)":
+ * "LAURA…, identificado con…, quien para efectos de este contrato obra en nombre propio y se denominará"
+ * o, con varios, "LAURA…, identificado con…, y PEDRO…, identificado con…, quienes … se denominarán".
+ */
+export function arrendatariosTexto(personas: Persona[]): string {
+  const partes = personas.map((p) => `${p.nombre}, identificado con ${identificacion(p)}`);
+  if (partes.length === 1) {
+    return `${partes[0]}, quien para efectos de este contrato obra en nombre propio y se denominará`;
+  }
+  const lista = `${partes.slice(0, -1).join(', ')}, y ${partes.at(-1)}`;
+  return `${lista}, quienes para efectos de este contrato obran en nombre propio, se obligan solidariamente y se denominarán`;
+}
+
 /** Traduce los datos validados a los textos exactos que van en la plantilla. Función pura. */
 export function construirContexto(d: DatosContrato, arrendador: DatosArrendador) {
-  const numeroDoc = /^\d+$/.test(d.arrendatario_numero_documento)
-    ? formatoMiles(Number(d.arrendatario_numero_documento))
-    : d.arrendatario_numero_documento;
+  const principal: Persona = {
+    nombre: d.arrendatario_nombre,
+    tipo: d.arrendatario_tipo_documento,
+    numero: d.arrendatario_numero_documento,
+  };
 
   const blanco = (v: string) => v || '________________';
 
   return {
     arrendatario_nombre: d.arrendatario_nombre,
-    arrendatario_identificacion: `${TIPOS_DOCUMENTO[d.arrendatario_tipo_documento]} No. ${numeroDoc}`,
-    arrendatario_documento_firma: `${ABREVIATURA_DOCUMENTO[d.arrendatario_tipo_documento]} ${numeroDoc}`,
+    arrendatario_documento_firma: documentoFirma(principal),
+    arrendatarios_texto: arrendatariosTexto([principal, ...d.coarrendatarios]),
+    coarrendatarios: d.coarrendatarios.map((p) => ({ nombre: p.nombre, documento_firma: documentoFirma(p) })),
     inmueble_direccion: d.inmueble_direccion,
     ocupantes_texto: cantidad(d.numero_ocupantes, 'persona', 'personas', true),
     precio_texto: pesosALetras(d.precio_mensual),

@@ -66,7 +66,7 @@ Requisitos: Node 20+, y LibreOffice para generar el PDF (sin él, el bot envía 
 
 ```bash
 npm install
-cp .env.example .env      # completa TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, y USUARIOS_AUTORIZADOS
+cp .env.example .env      # completa TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY y USUARIOS_AUTORIZADOS
 npm run dev               # long polling, recarga al guardar
 ```
 
@@ -124,7 +124,8 @@ el segundo falla con "409 Conflict".
 
 ## Despliegue en un servidor
 
-Cualquier VPS o contenedor con LibreOffice sirve. Ejemplo de Dockerfile mínimo:
+El bot usa long polling: no necesita dominio ni HTTPS, solo un equipo encendido con Node y LibreOffice.
+Cualquier VPS o contenedor sirve. Ejemplo de Dockerfile mínimo:
 
 ```dockerfile
 FROM node:22-slim
@@ -138,6 +139,13 @@ RUN npm run build
 CMD ["npm", "start"]
 ```
 
+`data/` guarda el catálogo (edificios, apartamentos, historial de contratos y arrendatarios): móntala como
+volumen para que sobreviva a reinicios y reconstrucciones, y respáldala.
+
+```bash
+docker run -d --restart unless-stopped --env-file .env -v "$PWD/data:/app/data" contrato-bot
+```
+
 ## Pendiente para producción
 
 - Cambiar `InMemorySessionStore` por Redis o PostgreSQL (implementa la interfaz `SessionStore`); hoy un
@@ -146,5 +154,6 @@ CMD ["npm", "start"]
 - El depósito: la Ley 820 de 2003 (art. 16) prohíbe exigir depósitos en dinero en vivienda
   urbana; validarlo con un abogado.
 - Pasar de long polling a webhook si se despliega en un servicio serverless.
-- Política de tratamiento de datos publicada (enlace en el mensaje de autorización) y retención de contratos.
+- Habeas data (Ley 1581 de 2012): el bot guarda nombre, cédula y contacto de los arrendatarios. Obtener su
+  autorización (p. ej. una cláusula en el contrato) y definir cuánto tiempo se conservan los contratos.
 - Revisión de la plantilla por un abogado.

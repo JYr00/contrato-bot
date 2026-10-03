@@ -1,7 +1,7 @@
 # contrato-bot
 
 Bot de Telegram para que el arrendador cree contratos de arrendamiento de vivienda urbana desde el chat:
-envía la foto de la cédula del arrendatario, elige con botones el inmueble, el precio, el canon y la duración,
+envía la foto de la cédula del arrendatario, elige con botones el inmueble, el canon, el depósito y la duración,
 y recibe el contrato listo en PDF y Word.
 
 ## Cómo funciona
@@ -14,8 +14,8 @@ y recibe el contrato listo en PDF y Word.
   💡 Sugerencia completa                              Paso a paso con botones:
   [Usar sugerencia] [Paso a paso]                     🏠 Edificio   [Dir. 1] [Dir. 2] [➕ Otra]
            │                                          🚪 Apto       [201] [501] [Sin apto] [➕ Otro]
-           │                                          💰 Precio     [$1.5M] [$1.3M] [➕ Otro]
-           │                                          🔐 Canon      [$500k] [Sin canon] [➕ Otro]
+           │                                          💰 Canon      [$1.5M] [$1.3M] [➕ Otro]
+           │                                          🔐 Depósito   [$500k] [Sin depósito] [➕ Otro]
            │                                          📅 Duración   [3 meses] [6 meses] [➕ Otro]
            │                                          🗓️ Inicio     [Hoy] [1 del próximo mes] [➕ Otra]
            │                                          👥 Ocupantes, 📱 celular y correo, 📬 notificación
@@ -24,8 +24,8 @@ y recibe el contrato listo en PDF y Word.
 
 - **Una tarjeta por contrato:** el bot edita un solo mensaje que va mostrando lo ya respondido (con fecha de
   fin y total a pagar al iniciar) y la pregunta actual, con botón ⬅️ Atrás. Al terminar queda como constancia.
-- **Precio** es el arriendo mensual; **canon** es el depósito que se paga una sola vez al inicio. Si no hay
-  canon, el parágrafo del depósito no aparece en el contrato.
+- **Canon** es el arriendo mensual (como en el contrato y la Ley 820); **depósito** es el pago único al inicio.
+  Si no hay depósito, su parágrafo no aparece en el contrato.
 - **Edificio y apartamento por separado:** primero se elige el edificio y luego el apartamento (los ya usados
   salen como botón). Un edificio escrito se guarda de inmediato.
 - **Informe de inmuebles (`/inmuebles`):** cada edificio con su ocupación; al tocarlo, sus apartamentos con estado
@@ -38,19 +38,19 @@ y recibe el contrato listo en PDF y Word.
   libre si no tiene otro contrato, el arrendatario vuelve a su contrato anterior (o se olvida) y los valores
   que solo se usaron ahí dejan de sugerirse. Los archivos ya enviados por el chat no se borran.
 - **Aprende de lo que usas.** Cada dirección nueva se guarda al escribirla, y al generar un contrato se guardan
-  precio, canon, duración y los datos del arrendatario (`data/catalogo.json`). Los botones muestran primero lo
-  más reciente; el precio sugerido es el último usado en ese inmueble.
+  canon, depósito, duración y los datos del arrendatario (`data/catalogo.json`). Los botones muestran primero lo
+  más reciente; el canon sugerido es el último usado en ese inmueble.
 - **Varios arrendatarios:** se envía una cédula por persona (hasta 4). Desde la segunda, el bot pregunta
   "👥 Agregar como otro arrendatario" o "🔄 Reemplazar". Todos aparecen en el encabezado, se obligan
   solidariamente y firman; las notificaciones van al principal. Se quitan desde ✏️ Corregir.
 - **Renovar:** `/renovar` lista los últimos contratos (el que vence primero arriba); al elegir uno, el nuevo
-  contrato copia todo, empieza el día siguiente al vencimiento y va sin canon (ya se entregó). Enviar la foto
+  contrato copia todo, empieza el día siguiente al vencimiento y va sin depósito (ya se entregó). Enviar la foto
   de un arrendatario con contrato anterior propone lo mismo.
 - **Sin "otro valor" obligatorio:** en cualquier paso se puede escribir directamente ("1,5 millones",
   "un año", "15 de noviembre"). Los textos se interpretan con código determinista (`src/flujo/interpretar.ts`)
   y todo dato pasa por la validación de `src/contract/schema.ts`.
-- **Varios datos en un mensaje:** "apto 501, 750 mil, 200 de canon, 3 meses desde el 15" llena todo de una vez
-  y solo se pregunta lo que falta. También sirve para corregir desde el resumen ("cambia el precio a 800 mil").
+- **Varios datos en un mensaje:** "apto 501, 750 mil, 200 de depósito, 3 meses desde el 15" llena todo de una vez
+  y solo se pregunta lo que falta. También sirve para corregir desde el resumen ("cambia el canon a 800 mil").
   Esos mensajes los interpreta Claude (`src/ia/extractor-datos.ts`); los de un solo dato, el código local.
 - **Claude no redacta el contrato:** solo lee la foto y los mensajes libres, con salidas estructuradas. El texto
   del contrato es fijo (`templates/contrato-arrendamiento.docx`) y los valores en letras los calcula
@@ -81,7 +81,7 @@ Otros scripts:
 ## Cambiar el contrato
 
 Abre `templates/contrato-arrendamiento.docx` en Word y edítalo como cualquier documento. Los campos variables
-están entre llaves, por ejemplo `{canon_texto}`; no partas una llave con formatos distintos. Para agregar un
+están entre llaves, por ejemplo `{precio_texto}`; no partas una llave con formatos distintos. Para agregar un
 campo nuevo: añádelo en `schema.ts` (validación + etiqueta), en `construirContexto` de `render.ts` y, si se
 debe preguntar, en `ORDEN` y `PREGUNTAS` de `src/flujo/asistente.ts`.
 
@@ -106,7 +106,7 @@ CMD ["npm", "start"]
 - Cambiar `InMemorySessionStore` por Redis o PostgreSQL (implementa la interfaz `SessionStore`); hoy un
   contrato a medio llenar se pierde al reiniciar (el catálogo sí persiste en `data/`).
 - Respaldar `data/catalogo.json`: contiene datos personales de arrendatarios.
-- El canon como depósito: la Ley 820 de 2003 (art. 16) prohíbe exigir depósitos en dinero en vivienda
+- El depósito: la Ley 820 de 2003 (art. 16) prohíbe exigir depósitos en dinero en vivienda
   urbana; validarlo con un abogado.
 - Pasar de long polling a webhook si se despliega en un servicio serverless.
 - Política de tratamiento de datos publicada (enlace en el mensaje de autorización) y retención de contratos.

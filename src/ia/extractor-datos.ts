@@ -14,8 +14,8 @@ const Esquema = z.object({
     .nullable()
     .describe('Dirección completa del inmueble: "<edificio> apto <número>" o la de la casa.'),
   apartamento: z.string().nullable().describe('Solo el número de apartamento, cuando no se dice el edificio.'),
-  precio_mensual: z.number().int().nullable().describe('Arriendo mensual en pesos colombianos.'),
-  deposito: z.number().int().nullable().describe('Canon / depósito inicial en pesos. 0 si dicen "sin canon".'),
+  precio_mensual: z.number().int().nullable().describe('Canon: arriendo mensual en pesos colombianos.'),
+  deposito: z.number().int().nullable().describe('Depósito inicial (pago único) en pesos. 0 si dicen "sin depósito".'),
   duracion_meses: z.number().int().nullable(),
   fecha_inicio: z.string().nullable().describe('AAAA-MM-DD'),
   numero_ocupantes: z.number().int().nullable(),
@@ -30,9 +30,9 @@ un mensaje con datos del contrato. Devuelve solo lo que el mensaje dice explíci
 nunca inventes ni completes datos que no aparecen.
 
 Reglas:
-- "Precio" o "arriendo" es el valor mensual. "Canon" o "depósito" es un pago único al inicio (son distintos).
+- "Canon", "arriendo" o "precio" es el valor mensual. "Depósito" es un pago único al inicio (son distintos).
 - Montos en pesos colombianos, enteros: "750 mil" = 750000, "1,5 millones" = 1500000. Un número suelto \
-pequeño junto a precio/canon se entiende en miles ("200 de canon" = 200000).
+pequeño junto a canon/depósito se entiende en miles ("200 de depósito" = 200000).
 - Duración en meses: "un año" = 12.
 - Fechas en AAAA-MM-DD. Hoy es ${c.hoy}. Si no dicen mes o año, usa la próxima fecha futura que coincida \
 ("desde el 15" = el próximo día 15).

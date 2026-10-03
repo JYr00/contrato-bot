@@ -17,12 +17,12 @@ test('pide salida estructurada y descarta lo que el mensaje no menciona', async 
     },
   } as unknown as Anthropic;
 
-  const datos = await new ExtractorDatos(client, 'modelo').extraer('750 mil sin canon', {
+  const datos = await new ExtractorDatos(client, 'modelo').extraer('750 mil sin depósito', {
     hoy: '2026-10-02',
     edificios: ['Carrera 105 i 67 d 31, Bogotá'],
-    pregunta: '💰 ¿Cuál es el precio del arriendo mensual?',
+    pregunta: '💰 ¿Cuál es el canon (arriendo mensual)?',
   });
-  assert.deepEqual(datos, { precio_mensual: 750_000, deposito: 0 }, 'el 0 del canon se conserva');
+  assert.deepEqual(datos, { precio_mensual: 750_000, deposito: 0 }, 'el 0 del depósito se conserva');
 
   const pedido = llamadas[0]!;
   assert.equal(pedido.tool_choice, undefined, 'este modelo no admite forzar herramientas');

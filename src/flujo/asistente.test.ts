@@ -78,7 +78,7 @@ test('primer contrato: sin historial se escribe todo y la tarjeta acumula lo res
   assert.equal((await a.recibirTexto(e, 'Ana Ruiz Díaz 52123456')).nueva, true);
 });
 
-test('con historial: la foto sugiere el resto y se genera en dos toques', async () => {
+test('arrendatario conocido: la foto propone renovar y se genera en dos toques', async () => {
   const catalogo = Catalogo.enMemoria();
   await catalogo.registrarContrato({
     arrendatario_nombre: 'LAURA GÓMEZ PÉREZ',
@@ -86,9 +86,9 @@ test('con historial: la foto sugiere el resto y se genera en dos toques', async 
     arrendatario_numero_documento: '1020345678',
     inmueble_direccion: 'Carrera 105 i 67 d 31 apto 201',
     precio_mensual: 1_500_000,
-    deposito: 0,
+    deposito: 300_000,
     duracion_meses: 3,
-    fecha_inicio: '2026-01-01',
+    fecha_inicio: '2026-08-01',
     numero_ocupantes: 2,
     arrendatario_celular: '3105551234',
     arrendatario_correo: '',
@@ -105,9 +105,11 @@ test('con historial: la foto sugiere el resto y se genera en dos toques', async 
 
   s = await a.recibirBoton(e, boton(s, 'Sí, continuar'));
   assert.equal(e.paso, 'propuesta');
-  assert.match(s.tarjeta.texto, /👋 Ya tuvo un contrato antes/);
+  assert.match(s.tarjeta.texto, /🔁 Renovación del contrato que vence el 31 de octubre de 2026/);
   assert.match(s.tarjeta.texto, /Precio: \$1\.500\.000/);
-  assert.match(s.tarjeta.texto, /Canon \(depósito\): sin canon/);
+  assert.match(s.tarjeta.texto, /Canon \(depósito\): sin canon/, 'el canon ya se entregó en el contrato anterior');
+  assert.match(s.tarjeta.texto, /🔐 Sin canon: ya se entregó/);
+  assert.match(s.tarjeta.texto, /Del 1 de noviembre de 2026 al 31 de enero de 2027/);
   assert.match(s.tarjeta.texto, /Contacto: 3105551234/);
 
   s = await a.recibirBoton(e, boton(s, 'Usar sugerencia'));
@@ -246,4 +248,64 @@ test('edificio escrito: se guarda, se pregunta el apartamento y queda como botó
   s = await a.recibirBoton(e, boton(s, 'Sin apartamento'));
   assert.equal(e.datos.inmueble_direccion, 'Carrera 105 i 67 d 31, Bogotá');
   assert.equal(e.edificio, 'Carrera 105 i 67 d 31, Bogotá');
+});
+
+test('/renovar: lista contratos por vencimiento y el elegido va directo al resumen', async () => {
+  const vacio = new Asistente(Catalogo.enMemoria(), () => HOY);
+  assert.match(vacio.renovar(estadoInicial()).tarjeta.texto, /Todavía no hay contratos para renovar/);
+
+  const catalogo = Catalogo.enMemoria();
+  const base = {
+    arrendatario_tipo_documento: 'CC' as const,
+    precio_mensual: 900_000,
+    deposito: 0,
+    duracion_meses: 6,
+    numero_ocupantes: 1,
+    arrendatario_celular: '',
+    arrendatario_correo: '',
+    numero_ejemplares: 2,
+  };
+  await catalogo.registrarContrato({
+    ...base,
+    arrendatario_nombre: 'ANA RUIZ DÍAZ',
+    arrendatario_numero_documento: '52123456',
+    inmueble_direccion: 'Calle 1 # 2-3 apto 101',
+    arrendatario_direccion: 'Calle 1 # 2-3 apto 101',
+    fecha_inicio: '2026-06-01',
+  });
+  await catalogo.registrarContrato({
+    ...base,
+    arrendatario_nombre: 'PEDRO PÉREZ GIL',
+    arrendatario_numero_documento: '80123456',
+    inmueble_direccion: 'Calle 1 # 2-3 apto 202',
+    arrendatario_direccion: 'Calle 1 # 2-3 apto 202',
+    precio_mensual: 1_000_000,
+    duracion_meses: 3,
+    fecha_inicio: '2026-07-15',
+  });
+
+  const a = new Asistente(catalogo, () => HOY);
+  const e = estadoInicial();
+  let s = a.renovar(e);
+  assert.equal(s.nueva, true);
+  assert.deepEqual(etiquetas(s), [
+    ['PEDRO PÉREZ · apto 202 · vence 14 oct 2026'],
+    ['ANA RUIZ · apto 101 · vence 30 nov 2026'],
+  ]);
+
+  s = await a.recibirBoton(e, boton(s, 'PEDRO'));
+  assert.equal(e.paso, 'resumen');
+  assert.equal(e.datos.fecha_inicio, '2026-10-15', 'empieza el día siguiente al vencimiento');
+  assert.equal(e.datos.precio_mensual, 1_000_000);
+  assert.match(s.tarjeta.texto, /🔁 Renovación del contrato que vence el 14 de octubre de 2026/);
+  assert.match(s.tarjeta.texto, /Del 15 de octubre de 2026 al 14 de enero de 2027/);
+
+  s = await a.recibirBoton(e, boton(s, 'Generar'));
+  assert.ok(s.generar);
+  await catalogo.registrarContrato(s.generar);
+  assert.equal(
+    catalogo.arrendatario('80123456')!.ultimoContrato!.fecha_inicio,
+    '2026-10-15',
+    'la renovación pasa a ser el último contrato',
+  );
 });

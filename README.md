@@ -37,8 +37,12 @@ y recibe el contrato listo en PDF y Word.
 - **Sin "otro valor" obligatorio:** en cualquier paso se puede escribir directamente ("1,5 millones",
   "un año", "15 de noviembre"). Los textos se interpretan con código determinista (`src/flujo/interpretar.ts`)
   y todo dato pasa por la validación de `src/contract/schema.ts`.
-- **Claude solo lee la foto.** El texto del contrato es fijo (`templates/contrato-arrendamiento.docx`) y los
-  valores en letras los calcula `numero-a-letras.ts`.
+- **Varios datos en un mensaje:** "apto 501, 750 mil, 200 de canon, 3 meses desde el 15" llena todo de una vez
+  y solo se pregunta lo que falta. También sirve para corregir desde el resumen ("cambia el precio a 800 mil").
+  Esos mensajes los interpreta Claude (`src/ia/extractor-datos.ts`); los de un solo dato, el código local.
+- **Claude no redacta el contrato:** solo lee la foto y los mensajes libres, con salidas estructuradas. El texto
+  del contrato es fijo (`templates/contrato-arrendamiento.docx`) y los valores en letras los calcula
+  `numero-a-letras.ts`.
 - **Bot privado:** solo responde a los IDs de `USUARIOS_AUTORIZADOS`. A cualquier otro le dice su ID.
 
 ## Puesta en marcha

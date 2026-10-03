@@ -211,3 +211,21 @@ export function interpretarUnidad(texto: string): string | null {
   const u = t.replace(/^(?:apartamento|apto|apt|ap)\b\.?\s*(?:no\.?\s*|#\s*)?/i, '').trim();
   return u && u.length <= 20 ? u : null;
 }
+
+const SENALES: RegExp[] = [
+  /\$|\bmil\b|\bmill(o|on|ones)\b|\b\d{1,3}(\.\d{3})+\b|\b\d+\s*k\b/, // dinero
+  /\bmes(es)?\b|\banos?\b/, // duración
+  /\bdesde\b|\binicia|\bempieza|\b(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)[a-z]*\b|\b\d{1,2}\/\d{1,2}\b/, // fecha
+  /\b(apto|apartamento|apt)\b/, // apartamento
+  /\bcanon\b|\bdeposito\b/, // canon
+  /\bpersonas?\b|\bocupantes?\b/, // ocupantes
+];
+
+/**
+ * Cuántos tipos de dato distintos menciona un texto (dinero, duración, fecha, apartamento, canon, ocupantes).
+ * Con 2 o más, el mensaje trae varios datos a la vez y conviene interpretarlo completo.
+ */
+export function senalesDeDatos(texto: string): number {
+  const t = normalizar(texto);
+  return SENALES.filter((re) => re.test(t)).length;
+}

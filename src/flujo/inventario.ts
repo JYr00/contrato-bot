@@ -1,6 +1,6 @@
 import { fechaALetras } from '../contract/numero-a-letras.js';
 import { validarParcial, type DatosContrato } from '../contract/schema.js';
-import type { Catalogo } from '../datos/catalogo.js';
+import type { Catalogo, ContratoGuardado } from '../datos/catalogo.js';
 import { describir, type Boton, type Mensaje } from './asistente.js';
 import { componerDireccion, fechaFin, interpretarUnidad, separarUnidad } from './interpretar.js';
 
@@ -225,12 +225,68 @@ export class Inventario {
         { texto: '🔁 Renovar', data: `inv:renovar:${i}:${j}` },
       ]);
     }
+    if (contratos.length) botones.push([{ texto: `🗂 Contratos (${contratos.length})`, data: `inv:uc:${i}:${j}` }]);
     botones.push([{ texto: '📝 Nuevo contrato aquí', data: `inv:nuevo:${i}:${j}` }]);
     botones.push([
       { texto: '🗑 Quitar', data: `inv:delu:${i}:${j}` },
       { texto: '↩️ Volver', data: `inv:e:${i}` },
     ]);
     return { texto: partes.filter(Boolean).join('\n\n'), botones };
+  }
+
+  /** /contratos: los últimos contratos generados, para revisarlos o borrar los hechos por error. */
+  contratos(aviso?: string): Mensaje {
+    const recientes = this.catalogo.contratosRecientes(10);
+    return {
+      texto: [
+        aviso,
+        '🗂 Últimos contratos generados',
+        recientes.length ? 'Toca uno para ver el detalle, reenviarlo o borrarlo.' : 'Todavía no hay contratos.',
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+      botones: [...recientes.map((c) => [this.botonContrato(c, true)]), [{ texto: '↩️ Inmuebles', data: 'inv:inicio' }]],
+    };
+  }
+
+  /** Historial de contratos de un apartamento. */
+  contratosDeUnidad(i: number, j: number): Mensaje {
+    const edificio = this.catalogo.edificiosOrdenados()[i];
+    const direccion = edificio && this.catalogo.inmueblesDe(edificio)[j];
+    if (!direccion) return this.resumen('La lista cambió; vuelve a elegir.');
+    const contratos = this.catalogo.contratosGuardadosDe(direccion);
+    return {
+      texto: `🗂 Contratos de ${direccion}
+
+Toca uno para ver el detalle, reenviarlo o borrarlo.`,
+      botones: [...contratos.map((c) => [this.botonContrato(c, false)]), [{ texto: '↩️ Volver', data: `inv:u:${i}:${j}` }]],
+    };
+  }
+
+  /** Detalle de un contrato guardado. */
+  detalleContrato(id: string, aviso?: string): Mensaje {
+    const c = this.catalogo.contrato(id);
+    if (!c) return this.contratos('Ese contrato ya no existe.');
+    const generado = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date(c.generado));
+    return {
+      texto: [aviso, `📄 Contrato de ${c.datos.arrendatario_nombre}`, describir(c.datos), `🕓 Generado el ${fechaALetras(generado)}`]
+        .filter(Boolean)
+        .join('\n\n'),
+      botones: [
+        [
+          { texto: '📄 Reenviar', data: `inv:creenv:${id}` },
+          { texto: '🗑 Borrar', data: `inv:cdel:${id}` },
+        ],
+        [{ texto: '↩️ Contratos', data: 'inv:contratos' }],
+      ],
+    };
+  }
+
+  /** "LAURA GÓMEZ · apto 301 · 15 oct 2026" (con o sin el inmueble). */
+  private botonContrato(c: ContratoGuardado, conInmueble: boolean): Boton {
+    const d = c.datos;
+    const donde = conInmueble ? ` · ${etiquetaUnidad(d.inmueble_direccion) === 'casa' ? d.inmueble_direccion.split(',')[0] : `apto ${etiquetaUnidad(d.inmueble_direccion)}`}` : '';
+    return { texto: `${nombreCorto(d)}${donde} · ${fechaCorta(d.fecha_inicio)}`, data: `inv:c:${c.id}` };
   }
 
   /**
@@ -298,6 +354,44 @@ export class Inventario {
         if (!direccion || !textoMensaje.includes(`"${direccion}"`)) return { mensaje: this.resumen('La lista cambió; no quité nada.') };
         await this.catalogo.quitarInmueble(direccion);
         return { mensaje: this.edificio(i, `🗑 Quité: ${etiquetaUnidad(direccion)}`) };
+
+      case 'contratos':
+        return { mensaje: this.contratos() };
+      case 'uc':
+        return { mensaje: this.contratosDeUnidad(i, j) };
+      case 'c':
+        return { mensaje: this.detalleContrato(a!) };
+      case 'creenv': {
+        const c = this.catalogo.contrato(a!);
+        if (!c) return { mensaje: this.contratos('Ese contrato ya no existe.') };
+        return { mensaje: this.detalleContrato(a!), accion: { tipo: 'reenviar', datos: c.datos } };
+      }
+      case 'cdel': {
+        const c = this.catalogo.contrato(a!);
+        if (!c) return { mensaje: this.contratos('Ese contrato ya no existe.') };
+        return {
+          mensaje: {
+            texto:
+              `🗑 ¿Borrar el contrato de ${c.datos.arrendatario_nombre} en ${c.datos.inmueble_direccion}, ` +
+              `del ${fechaALetras(c.datos.fecha_inicio)}?\n\nSe quita del historial y del informe, y el bot deja de ` +
+              'sugerir lo que aprendió de él. Los archivos que ya se enviaron por el chat no se borran.',
+            botones: [[{ texto: '🗑 Sí, borrar', data: `inv:cdelok:${a}` }, { texto: '↩️ No', data: `inv:c:${a}` }]],
+          },
+        };
+      }
+      case 'cdelok': {
+        const borrado = await this.catalogo.borrarContrato(a!);
+        if (!borrado) return { mensaje: this.contratos('Ese contrato ya no existe.') };
+        const d = borrado.datos;
+        const libre = estadoInmueble(this.catalogo.contratosDe(d.inmueble_direccion), this.hoy()).tipo === 'libre';
+        const aviso = [
+          `🗑 Borré el contrato de ${d.arrendatario_nombre} (${d.inmueble_direccion}).`,
+          libre && `${EMOJI.libre} Ese inmueble quedó libre. Si no existe (dirección equivocada), quítalo desde /inmuebles.`,
+        ]
+          .filter(Boolean)
+          .join('\n');
+        return { mensaje: this.contratos(aviso) };
+      }
 
       case 'reenviar':
       case 'renovar':

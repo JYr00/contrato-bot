@@ -4,7 +4,7 @@ Genera templates/contrato-arrendamiento.docx a partir del texto del contrato ori
 Los campos variables usan la sintaxis de docxtemplater: {nombre_campo}.
 Cada placeholder queda dentro de un solo "run" para que docxtemplater lo reconozca.
 
-Uso:  python3 scripts/build-template.py
+Uso:  python3 scripts/build-template.py   (requiere: pip install python-docx)
 Tras generarla, la plantilla se puede editar a mano en Word sin problema,
 siempre que no se partan los {placeholders}.
 """
@@ -13,6 +13,8 @@ from pathlib import Path
 from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 
 OUT = Path(__file__).resolve().parent.parent / "templates" / "contrato-arrendamiento.docx"
@@ -42,6 +44,17 @@ def p(title: str = "", body: str = "", *, indent: float = 0, align=WD_ALIGN_PARA
     return par
 
 
+def mantener_junta(tabla):
+    """Evita que la tabla se parta entre páginas: ninguna fila se divide y cada fila va con la siguiente."""
+    for i, fila in enumerate(tabla.rows):
+        trPr = fila._tr.get_or_add_trPr()
+        trPr.append(OxmlElement("w:cantSplit"))
+        for celda in fila.cells:
+            for par in celda.paragraphs:
+                par.paragraph_format.keep_together = True
+                par.paragraph_format.keep_with_next = i < len(tabla.rows) - 1
+
+
 # --- Encabezado -------------------------------------------------------------
 t = p("CONTRATO DE ARRENDAMIENTO DE VIVIENDA URBANA", align=WD_ALIGN_PARAGRAPH.CENTER)
 t.runs[0].font.size = Pt(12)
@@ -57,12 +70,12 @@ p("", "MARIO A. ROJAS RODELO, con domicilio en la ciudad de BOGOTÁ, identificad
 
 p("Primera. – Objeto: ",
   "Por medio del presente contrato, EL ARRENDADOR entrega a título de arrendamiento a EL "
-  "ARRENDATARIO el siguiente bien inmueble: Carrera 105 i 67 d 31 apto {apartamento}, destinado "
+  "ARRENDATARIO el siguiente bien inmueble: {inmueble_direccion}, destinado "
   "para el uso de vivienda para {ocupantes_texto}. LINDEROS: Se plasmarán en documento anexo que "
   "hará parte del contrato.")
 
 p("Segunda. – Canon de Arrendamiento: ",
-  "El canon de arrendamiento mensual es la suma de {canon_texto} M/cte, que EL ARRENDATARIO pagará "
+  "El canon de arrendamiento mensual es la suma de {precio_texto} M/cte, que EL ARRENDATARIO pagará "
   "anticipadamente al ARRENDADOR o a su orden, en el domicilio de EL ARRENDADOR ubicado en la "
   "Carrera 105 H 67 D 33, dentro de los primeros cinco (5) días de cada mes. Cada doce (12) meses el "
   "canon de arrendamiento será reajustado en el porcentaje máximo correspondiente al IPC del año "
@@ -71,6 +84,16 @@ p("Parágrafo 1: ",
   "La tolerancia de EL ARRENDADOR en recibir el pago del canon de arrendamiento con posterioridad "
   "al plazo indicado para ello en esta Cláusula no podrá entenderse, en ningún caso, como ánimo de "
   "EL ARRENDADOR de modificar el término establecido en este Contrato para el pago del canon.")
+# Párrafo condicional: docxtemplater (paragraphLoop) elimina los párrafos de apertura y cierre,
+# y omite el parágrafo completo cuando no se pactó depósito.
+p("", "{#hay_deposito}")
+p("Parágrafo 2: ",
+  "A la firma del presente Contrato, EL ARRENDATARIO entrega a EL ARRENDADOR la suma de "
+  "{deposito_texto} M/cte, a título de depósito, para cubrir los daños al inmueble, los servicios "
+  "públicos y demás obligaciones pendientes a cargo de EL ARRENDATARIO a la fecha de restitución del "
+  "Inmueble. El saldo, si lo hubiere, será devuelto a EL ARRENDATARIO una vez restituido el Inmueble "
+  "y verificado el pago de dichas obligaciones.")
+p("", "{/hay_deposito}")
 
 p("Tercera. – Vigencia: ",
   "El arrendamiento tendrá una duración de {duracion_texto}, contados a partir del "
@@ -300,14 +323,18 @@ for r, (izq, der) in enumerate(filas):
             par.paragraph_format.space_after = Pt(2)
             run = par.add_run(linea)
             run.bold = r == 0
+mantener_junta(tabla)
 
 doc.add_paragraph()
-p("", "Para constancia, el presente Contrato es suscrito en la ciudad de Bogotá, en "
+# El cierre y las firmas van siempre juntos en la misma página: si no caben, pasan completos a la siguiente.
+constancia = p("", "Para constancia, el presente Contrato es suscrito en la ciudad de Bogotá, en "
   "{ejemplares_texto} ejemplares de igual valor, cada uno de ellos con destino a cada una de las "
   "partes.")
+constancia.paragraph_format.keep_with_next = True
+constancia.paragraph_format.keep_together = True
 
-doc.add_paragraph()
-doc.add_paragraph()
+for _ in range(2):
+    doc.add_paragraph().paragraph_format.keep_with_next = True
 firmas = doc.add_table(rows=4, cols=2)
 firmas.alignment = WD_TABLE_ALIGNMENT.CENTER
 contenido = [
@@ -322,6 +349,7 @@ for r, (izq, der) in enumerate(contenido):
         par.paragraph_format.space_after = Pt(0)
         run = par.add_run(texto)
         run.bold = r == 1
+mantener_junta(firmas)
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
 doc.save(OUT)

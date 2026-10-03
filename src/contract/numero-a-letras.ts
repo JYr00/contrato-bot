@@ -83,7 +83,7 @@ export function cantidad(n: number, singular: string, plural: string, femenino =
   return `${letras} (${n}) ${n === 1 ? singular : plural}`;
 }
 
-const MESES = [
+export const MESES = [
   'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre',
   'noviembre', 'diciembre',
 ];

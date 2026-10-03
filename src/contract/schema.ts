@@ -20,9 +20,19 @@ function fechaValida(iso: string): boolean {
   return fecha.getUTCFullYear() === a && fecha.getUTCMonth() === m! - 1 && fecha.getUTCDate() === d;
 }
 
+const pesos = (campo: string, minimo: number) =>
+  z.coerce
+    .number()
+    .int(`${campo} debe ser un valor entero en pesos.`)
+    .min(minimo, `${campo} parece demasiado bajo; debe estar en pesos colombianos.`)
+    .max(100_000_000, `${campo} parece demasiado alto; confirma el valor.`);
+
+/** Texto opcional: '' significa "se dejó en blanco a propósito" (queda una línea para llenar a mano). */
+const opcional = <T extends z.ZodTypeAny>(esquema: T) => z.literal('').or(esquema);
+
 /**
  * Cada campo variable del contrato con su validación.
- * El agente solo puede guardar datos que pasen por aquí.
+ * Ningún dato llega a la plantilla sin pasar por aquí.
  */
 export const campos = {
   arrendatario_nombre: z
@@ -39,24 +49,33 @@ export const campos = {
     .string()
     .transform((s) => s.replace(/[.\s-]/g, '').toUpperCase())
     .pipe(z.string().regex(/^[A-Z0-9]{4,15}$/, 'Número de documento inválido.')),
-  apartamento: z.string().trim().min(1).max(20, 'Número de apartamento demasiado largo.'),
-  numero_ocupantes: z.coerce.number().int().min(1).max(15, 'Máximo 15 ocupantes.'),
-  canon_mensual: z.coerce
+  inmueble_direccion: z
+    .string()
+    .trim()
+    .min(8, 'Dirección incompleta: incluye calle/carrera, número y apartamento si aplica.')
+    .max(150)
+    .transform((s) => s.replace(/\s+/g, ' ')),
+  precio_mensual: pesos('El precio', 100_000),
+  deposito: z.coerce
     .number()
     .int('El canon debe ser un valor entero en pesos.')
-    .min(100_000, 'El canon parece demasiado bajo; debe estar en pesos colombianos.')
-    .max(100_000_000, 'El canon parece demasiado alto; confirma el valor.'),
-  duracion_meses: z.coerce.number().int().min(1).max(120, 'Máximo 120 meses.'),
+    .min(0)
+    .max(100_000_000, 'El canon parece demasiado alto; confirma el valor.')
+    .refine((n) => n === 0 || n >= 10_000, 'El canon parece demasiado bajo; debe estar en pesos colombianos.'),
+  duracion_meses: z.coerce.number().int().min(1, 'Mínimo 1 mes.').max(120, 'Máximo 120 meses.'),
   fecha_inicio: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Formato esperado AAAA-MM-DD.')
     .refine(fechaValida, 'La fecha no existe.'),
+  numero_ocupantes: z.coerce.number().int().min(1).max(15, 'Máximo 15 ocupantes.'),
+  arrendatario_celular: opcional(
+    z
+      .string()
+      .transform((s) => s.replace(/[\s()-]/g, '').replace(/^\+?57/, ''))
+      .pipe(z.string().regex(/^3\d{9}$/, 'Celular colombiano inválido (10 dígitos, empieza por 3).')),
+  ),
+  arrendatario_correo: opcional(z.string().trim().toLowerCase().email('Correo electrónico inválido.')),
   arrendatario_direccion: z.string().trim().min(5, 'Dirección incompleta.').max(150),
-  arrendatario_correo: z.string().trim().toLowerCase().email('Correo electrónico inválido.'),
-  arrendatario_celular: z
-    .string()
-    .transform((s) => s.replace(/[\s()-]/g, '').replace(/^\+?57/, ''))
-    .pipe(z.string().regex(/^3\d{9}$/, 'Celular colombiano inválido (10 dígitos, empieza por 3).')),
   numero_ejemplares: z.coerce.number().int().min(1).max(5),
 } satisfies Record<string, z.ZodTypeAny>;
 
@@ -65,21 +84,21 @@ export type DatosContrato = { [K in CampoContrato]: z.output<(typeof campos)[K]>
 
 export const CAMPOS: CampoContrato[] = Object.keys(campos) as CampoContrato[];
 
-/** Descripción de cada campo: la usa el agente para saber qué preguntar. */
-export const DESCRIPCIONES: Record<CampoContrato, string> = {
-  arrendatario_nombre: 'Nombre completo del arrendatario (nombres y apellidos).',
-  arrendatario_tipo_documento:
-    'Tipo de documento: CC (cédula de ciudadanía), CE (cédula de extranjería), PA (pasaporte) o PPT.',
-  arrendatario_numero_documento: 'Número del documento de identidad, solo dígitos/letras.',
-  apartamento: 'Número del apartamento dentro de Carrera 105 i 67 d 31 (ej. "201").',
-  numero_ocupantes: 'Cuántas personas vivirán en el inmueble.',
-  canon_mensual: 'Canon mensual en pesos colombianos, como entero sin puntos (ej. 1500000).',
-  duracion_meses: 'Duración del contrato en meses (ej. 12).',
-  fecha_inicio: 'Fecha de inicio del contrato en formato AAAA-MM-DD.',
-  arrendatario_direccion: 'Dirección del arrendatario para notificaciones.',
-  arrendatario_correo: 'Correo electrónico del arrendatario.',
-  arrendatario_celular: 'Celular del arrendatario (10 dígitos).',
-  numero_ejemplares: 'Número de ejemplares firmados del contrato (por defecto 2).',
+/** Nombre corto de cada campo para el resumen y los mensajes de error. */
+export const ETIQUETAS: Record<CampoContrato, string> = {
+  arrendatario_nombre: 'Arrendatario',
+  arrendatario_tipo_documento: 'Tipo de documento',
+  arrendatario_numero_documento: 'Número de documento',
+  inmueble_direccion: 'Inmueble',
+  precio_mensual: 'Precio (arriendo mensual)',
+  deposito: 'Canon (depósito inicial)',
+  duracion_meses: 'Duración',
+  fecha_inicio: 'Fecha de inicio',
+  numero_ocupantes: 'Ocupantes',
+  arrendatario_celular: 'Celular',
+  arrendatario_correo: 'Correo',
+  arrendatario_direccion: 'Dirección de notificación',
+  numero_ejemplares: 'Ejemplares',
 };
 
 export const VALORES_POR_DEFECTO: Partial<DatosContrato> = { numero_ejemplares: 2 };
@@ -94,7 +113,7 @@ export interface ResultadoValidacion {
 export function validarParcial(entrada: Record<string, unknown>): ResultadoValidacion {
   const resultado: ResultadoValidacion = { guardados: {}, errores: {}, ignorados: [] };
   for (const [clave, valor] of Object.entries(entrada)) {
-    if (valor === null || valor === undefined || valor === '') continue;
+    if (valor === null || valor === undefined) continue;
     if (!(clave in campos)) {
       resultado.ignorados.push(clave);
       continue;

@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { DatosContrato } from '../contract/schema.js';
-import { separarUnidad } from '../flujo/interpretar.js';
+import { fechaFin, separarUnidad } from '../flujo/interpretar.js';
 
 export interface Inmueble {
   direccion: string;
@@ -27,6 +27,8 @@ export interface ArrendatarioGuardado {
   direccion?: string;
   ocupantes?: number;
   ultimoInmueble?: string;
+  /** Datos completos del último contrato generado: base para renovarlo. */
+  ultimoContrato?: DatosContrato;
   ultimoUso: number;
 }
 
@@ -173,6 +175,16 @@ export class Catalogo {
     return this.sugerir(this.datos.duraciones, undefined, n);
   }
 
+  /** Últimos contratos de cada arrendatario, el que vence primero arriba. */
+  contratosRenovables(n = 8): DatosContrato[] {
+    const fin = (c: DatosContrato) => fechaFin(c.fecha_inicio, c.duracion_meses);
+    return Object.values(this.datos.arrendatarios)
+      .map((a) => a.ultimoContrato)
+      .filter((c): c is DatosContrato => !!c)
+      .sort((a, b) => fin(a).localeCompare(fin(b)))
+      .slice(0, n);
+  }
+
   arrendatario(numeroDocumento: string): ArrendatarioGuardado | undefined {
     return this.datos.arrendatarios[numeroDocumento];
   }
@@ -206,6 +218,7 @@ export class Catalogo {
       direccion: d.arrendatario_direccion,
       ocupantes: d.numero_ocupantes,
       ultimoInmueble: d.inmueble_direccion,
+      ultimoContrato: { ...d },
       ultimoUso: ahora,
     };
     await this.guardar();

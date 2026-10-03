@@ -114,6 +114,11 @@ bot.command(['start', 'nuevo'], async (ctx) => {
   await mostrar(ctx, session, asistente.iniciar(session.estado));
 });
 
+bot.command('renovar', async (ctx) => {
+  const session = await sesiones.get(ctx.chat.id);
+  await mostrar(ctx, session, asistente.renovar(session.estado));
+});
+
 bot.command('cancelar', async (ctx) => {
   const session = await sesiones.get(ctx.chat.id);
   if (session.tarjetaId && session.estado.paso !== 'listo') {
@@ -176,6 +181,7 @@ bot.catch((err) => console.error('Error no controlado:', err.error));
 
 await bot.api.setMyCommands([
   { command: 'nuevo', description: 'Crear un contrato nuevo' },
+  { command: 'renovar', description: 'Renovar un contrato anterior' },
   { command: 'cancelar', description: 'Descartar el contrato en curso' },
   { command: 'direcciones', description: 'Ver, agregar o borrar edificios guardados' },
 ]);

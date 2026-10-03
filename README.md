@@ -31,7 +31,9 @@ y recibe el contrato listo en PDF y Word.
 - **Aprende de lo que usas.** Cada dirección nueva se guarda al escribirla, y al generar un contrato se guardan
   precio, canon, duración y los datos del arrendatario (`data/catalogo.json`). Los botones muestran primero lo
   más reciente; el precio sugerido es el último usado en ese inmueble.
-- **Arrendatario conocido:** si la cédula ya tuvo un contrato, se sugieren su celular, correo y ocupantes.
+- **Renovar:** `/renovar` lista los últimos contratos (el que vence primero arriba); al elegir uno, el nuevo
+  contrato copia todo, empieza el día siguiente al vencimiento y va sin canon (ya se entregó). Enviar la foto
+  de un arrendatario con contrato anterior propone lo mismo.
 - **Sin "otro valor" obligatorio:** en cualquier paso se puede escribir directamente ("1,5 millones",
   "un año", "15 de noviembre"). Los textos se interpretan con código determinista (`src/flujo/interpretar.ts`)
   y todo dato pasa por la validación de `src/contract/schema.ts`.
@@ -49,7 +51,7 @@ cp .env.example .env      # completa TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY, y US
 npm run dev               # long polling, recarga al guardar
 ```
 
-Comandos del bot: `/nuevo`, `/cancelar` y `/direcciones` (ver, agregar o borrar edificios). También basta con enviar la foto de una cédula para empezar.
+Comandos del bot: `/nuevo`, `/renovar`, `/cancelar` y `/direcciones` (ver, agregar o borrar edificios). También basta con enviar la foto de una cédula para empezar.
 
 Otros scripts:
 

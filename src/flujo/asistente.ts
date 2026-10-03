@@ -21,6 +21,7 @@ import {
   interpretarUnidad,
   primeroDelMesSiguiente,
   separarUnidad,
+  sumarDias,
 } from './interpretar.js';
 
 /** Preguntas que se hacen una por una, en este orden, después del documento. */
@@ -40,7 +41,16 @@ const CAMPOS_DE: Record<PasoDato, CampoContrato[]> = {
   notificacion: ['arrendatario_direccion'],
 };
 
-export type Paso = 'inicio' | 'documento' | 'confirmar_documento' | 'propuesta' | PasoDato | 'resumen' | 'corregir' | 'listo';
+export type Paso =
+  | 'inicio'
+  | 'renovar'
+  | 'documento'
+  | 'confirmar_documento'
+  | 'propuesta'
+  | PasoDato
+  | 'resumen'
+  | 'corregir'
+  | 'listo';
 
 type TipoDocumento = DatosContrato['arrendatario_tipo_documento'];
 type Datos = Partial<DatosContrato>;
@@ -113,6 +123,13 @@ const documento = (tipo: TipoDocumento, numero: string) =>
   `${ABREVIATURA_DOCUMENTO[tipo]} ${/^\d+$/.test(numero) ? formatoMiles(Number(numero)) : numero}`;
 const contacto = (d: Datos) =>
   [d.arrendatario_celular, d.arrendatario_correo].filter(Boolean).join(' · ') || '(en blanco)';
+
+const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+/** "2027-01-14" → "14 ene 2027" */
+const fechaCorta = (iso: string) => {
+  const [a, m, d] = iso.split('-').map(Number);
+  return `${d} ${MESES_CORTOS[m! - 1]} ${a}`;
+};
 
 const EJEMPLO_DOCUMENTO = 'Laura Gómez Pérez CC 1020345678';
 const PEDIR_DOCUMENTO =
@@ -331,6 +348,37 @@ export class Asistente {
     return { tarjeta: this.tarjeta(e, PEDIR_DOCUMENTO), nueva: true };
   }
 
+  /** /renovar: lista los últimos contratos para elegir cuál renovar. */
+  renovar(e: EstadoAsistente): Salida {
+    Object.assign(e, estadoInicial());
+    const contratos = this.catalogo.contratosRenovables();
+    if (!contratos.length) {
+      return {
+        tarjeta: {
+          texto:
+            '🔁 Renovar contrato\n\nTodavía no hay contratos para renovar: se guardan desde el próximo que generes.\n\n' +
+            PEDIR_DOCUMENTO,
+        },
+        nueva: true,
+      };
+    }
+    e.paso = 'renovar';
+    e.ofertas = contratos.map((c) => ({ arrendatario_numero_documento: c.arrendatario_numero_documento }));
+    const hoy = this.hoy();
+    const botones = contratos.map((c, i) => {
+      const fin = fechaFin(c.fecha_inicio, c.duracion_meses);
+      const unidad = separarUnidad(c.inmueble_direccion).unidad;
+      const nombre = c.arrendatario_nombre.split(' ').slice(0, 2).join(' ');
+      return [
+        {
+          texto: `${nombre} · ${unidad ? `apto ${unidad}` : c.inmueble_direccion} · ${fin < hoy ? 'venció' : 'vence'} ${fechaCorta(fin)}`,
+          data: `renovar:v${i}`,
+        },
+      ];
+    });
+    return { tarjeta: { texto: '🔁 Renovar contrato\n\n¿Cuál contrato quieres renovar?', botones }, nueva: true };
+  }
+
   /** Vuelve a mostrar la tarjeta del paso actual (p. ej. tras un error al generar). */
   actual(e: EstadoAsistente, aviso?: string): Salida {
     const avisos = aviso ? [aviso] : [];
@@ -339,6 +387,8 @@ export class Asistente {
       case 'listo':
       case 'documento':
         return { tarjeta: this.tarjeta(e, PEDIR_DOCUMENTO, undefined, avisos) };
+      case 'renovar':
+        return this.renovar(e);
       case 'confirmar_documento':
         return this.confirmacionDocumento(e, avisos);
       case 'propuesta':
@@ -386,9 +436,10 @@ export class Asistente {
     switch (e.paso) {
       case 'inicio':
       case 'listo':
+      case 'renovar':
       case 'documento':
       case 'confirmar_documento': {
-        const nueva = e.paso === 'inicio' || e.paso === 'listo';
+        const nueva = e.paso === 'inicio' || e.paso === 'listo' || e.paso === 'renovar';
         const doc = interpretarDocumentoEscrito(texto);
         if (doc.nombre && doc.numero) {
           if (nueva) this.iniciar(e);
@@ -417,6 +468,15 @@ export class Asistente {
     if (paso !== e.paso) return obsoleto();
 
     switch (e.paso) {
+      case 'renovar': {
+        const numero = e.ofertas[Number(accion.slice(1))]?.arrendatario_numero_documento;
+        const anterior = numero ? this.catalogo.arrendatario(numero)?.ultimoContrato : undefined;
+        if (!anterior) return obsoleto();
+        const { datos, avisos } = this.renovacion(anterior);
+        e.datos = datos;
+        return this.resumen(e, avisos);
+      }
+
       case 'confirmar_documento':
         if (accion === 'ok' && e.documento) return this.confirmarDocumento(e, e.documento);
         e.paso = 'documento';
@@ -487,11 +547,34 @@ export class Asistente {
     // Si es una corrección o el contrato ya está avanzado, sigue donde iba.
     if (e.volverAResumen || e.datos.inmueble_direccion) return this.avanzar(e, avisos);
 
+    if (yaConocido?.ultimoContrato) {
+      const renovacion = this.renovacion(yaConocido.ultimoContrato);
+      e.propuesta = renovacion.datos;
+      e.paso = 'propuesta';
+      return this.mostrarPropuesta(e, renovacion.avisos);
+    }
+
     const propuesta = this.proponer(e);
     if (!propuesta) return this.avanzar(e, avisos);
     e.propuesta = propuesta;
     e.paso = 'propuesta';
     return this.mostrarPropuesta(e, avisos);
+  }
+
+  /**
+   * Contrato que continúa al anterior: mismos datos, empieza el día siguiente al vencimiento y sin canon
+   * (ya se entregó). El precio se mantiene; los avisos recuerdan revisarlo.
+   */
+  private renovacion(anterior: DatosContrato): { datos: Datos; avisos: string[] } {
+    const fin = fechaFin(anterior.fecha_inicio, anterior.duracion_meses);
+    const inicio = sumarDias(fin, 1);
+    const avisos = [
+      `🔁 Renovación del contrato que ${fin < this.hoy() ? 'venció' : 'vence'} el ${fechaALetras(fin)}.`,
+      '💰 Mismo precio anterior; corrígelo si hay reajuste.',
+    ];
+    if (anterior.deposito > 0) avisos.push('🔐 Sin canon: ya se entregó en el contrato anterior. Corrígelo si aplica.');
+    if (inicio < this.hoy()) avisos.push('⚠️ La fecha de inicio ya pasó; corrígela si el nuevo contrato empieza después.');
+    return { datos: { ...anterior, fecha_inicio: inicio, deposito: 0 }, avisos };
   }
 
   /** Sugerencia completa con lo usado antes. Solo si hay al menos inmueble y precio para sugerir. */

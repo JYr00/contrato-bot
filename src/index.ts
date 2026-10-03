@@ -6,7 +6,7 @@ import { ContractRenderer } from './contract/render.js';
 import type { DatosContrato } from './contract/schema.js';
 import { Catalogo } from './datos/catalogo.js';
 import { Asistente, type Mensaje, type Salida } from './flujo/asistente.js';
-import { agregarDireccion, botonDirecciones, listaDirecciones } from './flujo/direcciones.js';
+import { Inventario } from './flujo/inventario.js';
 import { ExtractorDatos } from './ia/extractor-datos.js';
 import { LectorDocumento, type TipoImagen } from './ia/lector-documento.js';
 import { InMemorySessionStore, type Session } from './session/store.js';
@@ -24,6 +24,7 @@ const hoy = () => new Intl.DateTimeFormat('en-CA', { timeZone: ZONA_HORARIA }).f
 const claude = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
 const asistente = new Asistente(catalogo, hoy, new ExtractorDatos(claude, config.ANTHROPIC_MODEL));
 const lector = new LectorDocumento(claude, config.ANTHROPIC_MODEL);
+const inventario = new Inventario(catalogo, hoy);
 const sesiones = new InMemorySessionStore();
 const bot = new Bot(config.TELEGRAM_BOT_TOKEN);
 
@@ -83,6 +84,21 @@ async function generar(ctx: Context, session: Session, datos: DatosContrato) {
   }
 }
 
+/** Vuelve a enviar los archivos de un contrato ya generado (desde el informe de inmuebles). */
+async function reenviar(ctx: Context, datos: DatosContrato) {
+  await ctx.replyWithChatAction('upload_document');
+  const contrato = await renderer.generar(datos);
+  const caption = `📄 Copia del contrato de ${datos.arrendatario_nombre}`;
+  if (contrato.pdf) await ctx.replyWithDocument(new InputFile(contrato.pdf, `${contrato.nombreBase}.pdf`), { caption });
+  await ctx.replyWithDocument(new InputFile(contrato.docx, `${contrato.nombreBase}.docx`), contrato.pdf ? {} : { caption });
+}
+
+const responder = (ctx: Context, m: Mensaje) => ctx.reply(m.texto, { reply_markup: teclado(m) });
+
+// Frases para pedir el informe sin comando (solo sin números, para no confundirlas con datos de un contrato).
+const PIDE_LIBRES = /\b(vac[ií]os?|libres?|desocupad[oa]s?|disponibles?)\b/i;
+const PIDE_INFORME = /\b(inmuebles?|apartamentos?|aptos?|informe|reporte|ocupad[oa]s?|contratos)\b/i;
+
 /** Descarga la imagen del mensaje (foto o archivo de imagen) desde Telegram. */
 async function descargarImagen(ctx: Context): Promise<{ datos: Buffer; tipo: TipoImagen } | string> {
   const doc = ctx.message?.document;
@@ -130,21 +146,34 @@ bot.command('cancelar', async (ctx) => {
   await ctx.reply('Listo, descarté el contrato en curso. Envía una foto de cédula o escribe /nuevo para empezar otro.');
 });
 
-bot.command('direcciones', async (ctx) => {
+// /inmuebles (y su alias /direcciones): informe con botones. Con texto, agrega ese edificio.
+bot.command(['inmuebles', 'direcciones'], async (ctx) => {
+  const session = await sesiones.get(ctx.chat.id);
+  session.inventario.esperando = undefined;
   const texto = ctx.match.trim();
-  const m = texto ? await agregarDireccion(catalogo, texto) : listaDirecciones(catalogo);
-  await ctx.reply(m.texto, { reply_markup: teclado(m) });
+  await responder(ctx, texto ? await inventario.agregarEdificio(texto) : inventario.resumen());
 });
 
-// Va antes del manejador general de botones: los "dir:…" no son del contrato en curso.
-bot.callbackQuery(/^dir:/, async (ctx) => {
+bot.command('libres', async (ctx) => {
+  const session = await sesiones.get(ctx.chat.id);
+  session.inventario.esperando = undefined;
+  await responder(ctx, inventario.libres());
+});
+
+// Va antes del manejador general de botones: los "inv:…" no son del contrato en curso.
+bot.callbackQuery(/^inv:/, async (ctx) => {
+  const session = await sesiones.get(ctx.chat!.id);
   const mensaje = ctx.callbackQuery.message;
   const texto = mensaje && 'text' in mensaje ? (mensaje.text ?? '') : '';
-  const m = await botonDirecciones(catalogo, ctx.callbackQuery.data, texto);
+  const { mensaje: m, accion } = await inventario.boton(session.inventario, ctx.callbackQuery.data, texto);
   await ctx.answerCallbackQuery();
   await ctx.editMessageText(m.texto, { reply_markup: teclado(m) }).catch((err) => {
     if (!noModificado(err)) throw err;
   });
+  if (accion?.tipo === 'reenviar') await reenviar(ctx, accion.datos);
+  if (accion?.tipo === 'renovar') await mostrar(ctx, session, asistente.renovarContrato(session.estado, accion.datos));
+  if (accion?.tipo === 'nuevo') await mostrar(ctx, session, asistente.nuevoEn(session.estado, accion.direccion));
+  await sesiones.save(session);
 });
 
 bot.on(['message:photo', 'message:document'], async (ctx) => {
@@ -166,8 +195,20 @@ bot.on(['message:photo', 'message:document'], async (ctx) => {
 
 bot.on('message:text', async (ctx) => {
   const session = await sesiones.get(ctx.chat.id);
+  const texto = ctx.message.text;
+
+  // Respuesta a "➕ Agregar apartamento / edificio" del informe.
+  const deInventario = await inventario.texto(session.inventario, texto);
+  if (deInventario) return void (await responder(ctx, deInventario));
+
+  // "muéstrame los apartamentos vacíos" sin contrato en curso.
+  if ((session.estado.paso === 'inicio' || session.estado.paso === 'listo') && !/\d/.test(texto)) {
+    if (PIDE_LIBRES.test(texto)) return void (await responder(ctx, inventario.libres()));
+    if (PIDE_INFORME.test(texto)) return void (await responder(ctx, inventario.resumen()));
+  }
+
   await ctx.replyWithChatAction('typing');
-  await mostrar(ctx, session, await asistente.recibirTexto(session.estado, ctx.message.text));
+  await mostrar(ctx, session, await asistente.recibirTexto(session.estado, texto));
 });
 
 bot.on('callback_query:data', async (ctx) => {
@@ -186,7 +227,8 @@ await bot.api.setMyCommands([
   { command: 'nuevo', description: 'Crear un contrato nuevo' },
   { command: 'renovar', description: 'Renovar un contrato anterior' },
   { command: 'cancelar', description: 'Descartar el contrato en curso' },
-  { command: 'direcciones', description: 'Ver, agregar o borrar edificios guardados' },
+  { command: 'inmuebles', description: 'Informe de edificios y apartamentos' },
+  { command: 'libres', description: 'Apartamentos libres' },
 ]);
 
 if (!config.USUARIOS_AUTORIZADOS.length) {

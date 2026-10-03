@@ -2,7 +2,7 @@
   "name": "contrato-bot",
   "version": "0.1.0",
   "private": true,
-  "description": "Bot de Telegram con agente de IA que genera contratos de arrendamiento de vivienda urbana",
+  "description": "Bot de Telegram para crear y administrar contratos de arrendamiento de vivienda urbana",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",

@@ -13,6 +13,7 @@ import { Asistente, type Mensaje, type Salida } from './flujo/asistente.js';
 import { Inventario } from './flujo/inventario.js';
 import { ExtractorDatos } from './ia/extractor-datos.js';
 import { LectorDocumento, type TipoImagen } from './ia/lector-documento.js';
+import { Bitacora, extractorConBitacora, lectorConBitacora } from './registro/bitacora.js';
 import { InMemorySessionStore, type Session } from './session/store.js';
 
 const ZONA_HORARIA = 'America/Bogota';
@@ -28,12 +29,25 @@ const carpetaDatos = dirname(config.CATALOGO_PATH);
 const archivos = new ArchivosContratos(join(carpetaDatos, 'contratos'));
 const respaldo = new Respaldo(config.CATALOGO_PATH, join(carpetaDatos, 'ultimo-respaldo.txt'));
 const hoy = () => new Intl.DateTimeFormat('en-CA', { timeZone: ZONA_HORARIA }).format(new Date());
+const bitacora = new Bitacora(join(carpetaDatos, 'logs', 'interacciones'), ZONA_HORARIA);
 const claude = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
-const asistente = new Asistente(catalogo, hoy, new ExtractorDatos(claude, config.ANTHROPIC_MODEL));
-const lector = new LectorDocumento(claude, config.ANTHROPIC_MODEL);
+const asistente = new Asistente(
+  catalogo,
+  hoy,
+  extractorConBitacora(new ExtractorDatos(claude, config.ANTHROPIC_MODEL), bitacora),
+);
+const lector = lectorConBitacora(new LectorDocumento(claude, config.ANTHROPIC_MODEL), bitacora);
 const inventario = new Inventario(catalogo, hoy);
 const sesiones = new InMemorySessionStore();
 const bot = new Bot(config.TELEGRAM_BOT_TOKEN);
+// Todo lo que el bot envía a Telegram queda en la bitácora (texto, botones, message_id).
+bot.api.config.use(bitacora.transformador());
+
+/** Error capturado: va a la consola y a la bitácora (con la actualización en curso, si la hay). */
+function registrarError(donde: string, err: unknown) {
+  console.error(`[${donde}]`, err);
+  void bitacora.registrar({ tipo: 'error', mensaje: `${donde}: ${(err as Error)?.message ?? err}`, pila: (err as Error)?.stack });
+}
 
 const teclado = (m: Mensaje) =>
   m.botones && InlineKeyboard.from(m.botones.map((fila) => fila.map((b) => InlineKeyboard.text(b.texto, b.data))));
@@ -81,11 +95,11 @@ async function generar(ctx: Context, session: Session, datos: DatosContrato) {
     if (contrato.pdf) await ctx.replyWithDocument(new InputFile(contrato.pdf, `${contrato.nombreBase}.pdf`));
     await ctx.replyWithDocument(new InputFile(contrato.docx, `${contrato.nombreBase}.docx`));
     const id = await catalogo.registrarContrato(datos);
-    await archivos.guardar(id, contrato).catch((err) => console.error(`[contratos] No se pudo guardar ${id}:`, err));
+    await archivos.guardar(id, contrato).catch((err) => registrarError(`contratos: no se pudo guardar ${id}`, err));
     await editarTarjeta(ctx, session, asistente.generado(session.estado));
     console.log(`[chat ${session.chatId}] Contrato generado: ${contrato.nombreBase}`);
   } catch (err) {
-    console.error(`[chat ${session.chatId}] Error generando el contrato:`, err);
+    registrarError(`chat ${session.chatId}: generando el contrato`, err);
     session.estado.paso = 'resumen';
     const salida = asistente.actual(session.estado, '⚠️ Tuve un problema generando el contrato. Intenta de nuevo.');
     await editarTarjeta(ctx, session, salida.tarjeta);
@@ -119,7 +133,7 @@ async function enviarRespaldo(chats: number[], motivo: string): Promise<number> 
       await bot.api.sendDocument(chat, new InputFile(archivo.datos, archivo.nombre), { caption });
       enviados++;
     } catch (err) {
-      console.error(`[respaldo] No se pudo enviar a ${chat}:`, (err as Error).message);
+      registrarError(`respaldo: no se pudo enviar a ${chat}`, err);
     }
   }
   if (enviados) await respaldo.marcar();
@@ -134,7 +148,7 @@ async function revisarRespaldo() {
       if (await enviarRespaldo([chatRespaldo], 'semanal')) console.log(`[respaldo] Enviado al chat ${chatRespaldo}.`);
     }
   } catch (err) {
-    console.error('[respaldo] Error:', err);
+    registrarError('respaldo', err);
   }
 }
 
@@ -160,6 +174,16 @@ async function descargarImagen(ctx: Context): Promise<{ datos: Buffer; tipo: Tip
   if (!r.ok) throw new Error(`Telegram respondió ${r.status} al descargar la imagen`);
   return { datos: Buffer.from(await r.arrayBuffer()), tipo };
 }
+
+// Bitácora: cada actualización se registra tal como llega y, al terminar, el estado en que quedó la
+// conversación. Va primero para registrar también los intentos de usuarios no autorizados.
+bot.use(
+  bitacora.middleware(async (ctx) => {
+    if (!ctx.chat || !ctx.from || !config.USUARIOS_AUTORIZADOS.includes(ctx.from.id)) return null;
+    const s = await sesiones.get(ctx.chat.id);
+    return { paso: s.estado.paso, datos: s.estado.datos, inventario: s.inventario, tarjetaId: s.tarjetaId };
+  }),
+);
 
 // Solo usuarios autorizados: el bot maneja datos personales de terceros.
 bot.use(async (ctx, next) => {
@@ -248,7 +272,7 @@ bot.on(['message:photo', 'message:document'], async (ctx) => {
     );
     await mostrar(ctx, session, await asistente.recibirDocumento(session.estado, doc));
   } catch (err) {
-    console.error(`[chat ${session.chatId}] Error leyendo el documento:`, err);
+    registrarError(`chat ${session.chatId}: leyendo el documento`, err);
     await ctx.reply('No pude leer la imagen. Intenta otra vez o escribe el nombre y número. Ej.: Laura Gómez Pérez CC 1020345678');
   }
 });
@@ -297,11 +321,13 @@ if (!config.USUARIOS_AUTORIZADOS.length) {
   console.warn('⚠️  USUARIOS_AUTORIZADOS está vacío: nadie puede usar el bot. Escríbele para conocer tu ID.');
 }
 
-process.once('SIGINT', () => bot.stop());
-process.once('SIGTERM', () => bot.stop());
+const detener = () => void bitacora.vaciar().finally(() => bot.stop());
+process.once('SIGINT', detener);
+process.once('SIGTERM', detener);
 
 setTimeout(revisarRespaldo, 60_000);
 setInterval(revisarRespaldo, 6 * 60 * 60 * 1000);
 
+void bitacora.registrar({ tipo: 'arranque', modelo: config.ANTHROPIC_MODEL, usuarios: config.USUARIOS_AUTORIZADOS.length });
 console.log('Bot iniciado (long polling)…');
 await bot.start();

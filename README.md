@@ -123,6 +123,31 @@ el segundo falla con "409 Conflict".
   (los de antes de este cambio se vuelven a generar). No van en el respaldo semanal: también quedaron en el
   chat cuando se generaron.
 
+### Bitácora de interacciones
+
+Cada interacción queda registrada en `data/logs/interacciones/AAAA-MM-DD.jsonl` (fecha de Bogotá), una línea
+JSON por evento, para poder revisar o reconstruir más adelante qué hizo cada usuario y qué respondió el bot:
+
+| `tipo` | Qué guarda |
+|---|---|
+| `actualizacion` | La actualización de Telegram tal como llegó: texto, botón tocado (`callback_query.data`), comando, foto (sus `file_id`, no la imagen) |
+| `salida` | Cada llamada del bot a Telegram: método (`sendMessage`, `editMessageText`, `sendDocument`…), texto, botones y el `message_id` devuelto. Los archivos, solo por nombre |
+| `ia` | Lo que respondió Claude: `lector` (datos leídos de la cédula) o `extractor` (datos entendidos de un mensaje libre), con su duración |
+| `estado` | Cómo quedó la conversación después de cada actualización: paso, datos del contrato en curso, estado del informe |
+| `error`, `arranque` | Errores (con su traza) y cada vez que el bot arranca |
+
+Todos llevan `v` (versión del formato), `ts` (hora UTC) y, si vienen de una actualización, `update_id`, `chat` y
+`usuario`, para agruparlos por conversación. Las imágenes de las cédulas no se guardan; los logs no se borran
+solos y contienen datos personales: quedan solo en este PC, dentro de `data/` (que no se sube al repositorio).
+
+Para revisarlos en PowerShell:
+
+```powershell
+Get-Content -Encoding UTF8 data\logs\interacciones\2026-10-04.jsonl | ConvertFrom-Json | Where-Object tipo -eq 'actualizacion'
+```
+
+`data/logs/bot-AAAA-MM.log` es otra cosa: la salida de consola del bot cuando corre con `npm run pc:instalar`.
+
 ## Despliegue en un servidor
 
 El bot usa long polling: no necesita dominio ni HTTPS, solo un equipo encendido con Node y LibreOffice.

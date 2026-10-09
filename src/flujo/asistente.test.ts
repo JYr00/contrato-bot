@@ -709,3 +709,59 @@ test('verificación fallida: pide el dato que falta o da un mensaje general', as
   assert.match(s.tarjeta.texto, /el documento no pasó la verificación/);
   assert.doesNotMatch(s.tarjeta.texto, /Párrafo 3/, 'el detalle técnico va a la bitácora, no al chat');
 });
+
+test('fecha: atajos, calendario por meses y "atrás" que vuelve al resumen al corregir', async () => {
+  const a = new Asistente(Catalogo.enMemoria(), () => HOY); // HOY = viernes 2 de octubre de 2026
+  const e = estadoInicial();
+  Object.assign(e.datos, {
+    arrendatario_nombre: 'LAURA GÓMEZ PÉREZ',
+    arrendatario_tipo_documento: 'CC',
+    arrendatario_numero_documento: '1020345678',
+    inmueble_direccion: 'Calle 9 # 8-7 apto 302',
+    precio_mensual: 750_000,
+    deposito: 0,
+    duracion_meses: 6,
+    fecha_inicio: '2026-11-01',
+    numero_ocupantes: 1,
+    arrendatario_celular: '',
+    arrendatario_correo: '',
+    arrendatario_direccion: 'Calle 9 # 8-7 apto 302',
+  });
+  e.paso = 'corregir';
+
+  let s = await a.recibirBoton(e, 'corregir:fecha');
+  assert.deepEqual(etiquetas(s), [
+    ['Hoy · 2 oct', 'Mañana · 3 oct'],
+    ['15 oct', '1 nov'],
+    ['📅 Otra fecha', '↩️ Volver al resumen'],
+  ]);
+
+  // Corrigiendo, "atrás" vuelve al resumen sin cambiar nada (antes llevaba a la pregunta de la duración).
+  s = await a.recibirBoton(e, boton(s, 'Volver al resumen'));
+  assert.equal(e.paso, 'resumen');
+  assert.equal(e.datos.fecha_inicio, '2026-11-01');
+
+  s = await a.recibirBoton(e, 'resumen:corregir');
+  s = await a.recibirBoton(e, 'corregir:fecha');
+  s = await a.recibirBoton(e, boton(s, 'Otra fecha'));
+  assert.match(s.tarjeta.texto, /Toca el día, o escríbela/);
+  let filas = etiquetas(s)!;
+  assert.deepEqual(filas[0], ['◀️', 'octubre de 2026', '▶️']);
+  assert.deepEqual(filas[1], ['L', 'M', 'M', 'J', 'V', 'S', 'D']);
+  assert.deepEqual(filas[2], ['·', '·', '·', '1', '[2]', '3', '4'], 'el 1 de octubre de 2026 es jueves; hoy entre corchetes');
+  assert.deepEqual(filas.at(-1), ['⬅️ Atrás']);
+
+  s = await a.recibirBoton(e, boton(s, '▶️'));
+  filas = etiquetas(s)!;
+  assert.deepEqual(filas[0]![1], 'noviembre de 2026');
+  assert.deepEqual(filas[2], ['·', '·', '·', '·', '·', '·', '✅1'], 'la fecha ya elegida va marcada');
+
+  s = await a.recibirBoton(e, boton(s, '10'));
+  assert.equal(e.paso, 'resumen', 'al tocar el día vuelve al resumen');
+  assert.equal(e.datos.fecha_inicio, '2026-11-10');
+  assert.match(s.tarjeta.texto, /Del 10 de noviembre de 2026/);
+
+  // Un botón del calendario con otro formato se ignora.
+  e.paso = 'fecha';
+  assert.equal((await a.recibirBoton(e, 'fecha:d2026-13')).obsoleto, true);
+});

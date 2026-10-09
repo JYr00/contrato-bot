@@ -55,6 +55,18 @@ y recibe el contrato listo en PDF y Word.
 - **Varios datos en un mensaje:** "apto 501, 750 mil, 200 de depósito, 3 meses desde el 15" llena todo de una vez
   y solo se pregunta lo que falta. También sirve para corregir desde el resumen ("cambia el canon a 800 mil").
   Esos mensajes los interpreta Claude (`src/ia/extractor-datos.ts`); los de un solo dato, el código local.
+  Los mensajes que llegan seguidos (menos de 1,5 s entre uno y otro, p. ej. un texto pegado en varias partes) se
+  juntan y se interpretan como uno solo (`src/session/agrupador.ts`).
+- **Fechas con un toque:** la fecha de inicio ofrece hoy, mañana, el próximo 15 y el 1 del mes siguiente;
+  "📅 Otra fecha" abre un calendario del mes con ◀️ ▶️. Al corregir un dato desde el resumen, "↩️ Volver al
+  resumen" regresa sin cambiarlo.
+- **Verificación antes de enviar:** el Word generado se compara con la plantilla y los datos confirmados
+  (`src/contract/verificar.ts`, sin IA). Si algo no cuadra no se envía: se pide el dato que falta o se da un
+  mensaje general, y el detalle queda en la bitácora.
+- **Avisos de fallas:** si la IA falla 3 veces seguidas, se rechaza un contrato o hay un error al generar, el bot
+  avisa por Telegram a `AVISOS_CHAT_ID` (o al chat de respaldos). `/estado` muestra si la IA responde, desde
+  cuándo corre el bot, los contratos de hoy y el último respaldo.
+- **Nada se pierde al reiniciar:** el contrato en curso de cada chat se guarda en `data/sesiones.json` (24 h).
 - **Claude no redacta el contrato:** solo lee la foto y los mensajes libres, con salidas estructuradas. El texto
   del contrato es fijo (`templates/contrato-arrendamiento.docx`) y los valores en letras los calcula
   `numero-a-letras.ts`.
@@ -70,7 +82,7 @@ cp .env.example .env      # completa TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY y USU
 npm run dev               # long polling, recarga al guardar
 ```
 
-Comandos del bot: `/nuevo`, `/renovar`, `/inmuebles` (también `/direcciones`), `/libres`, `/contratos`, `/respaldo` y `/cancelar`. También basta con enviar la foto de una cédula para empezar.
+Comandos del bot: `/nuevo`, `/renovar`, `/inmuebles` (también `/direcciones`), `/libres`, `/contratos`, `/respaldo`, `/estado` y `/cancelar`. También basta con enviar la foto de una cédula para empezar.
 
 Otros scripts:
 

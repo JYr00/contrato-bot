@@ -160,6 +160,23 @@ const contacto = (d: Datos) =>
 
 const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 /** "2027-01-14" → "14 ene 2027" */
+/**
+ * Fechas de inicio más usadas, sin repetir: hoy, mañana, el próximo 15 y el 1 del mes siguiente.
+ * "8 oct" (con el año solo si no es el de hoy).
+ */
+function fechasProbables(hoy: string): { etiqueta: string; fecha: string }[] {
+  const corta = (iso: string) => (iso.slice(0, 4) === hoy.slice(0, 4) ? fechaCorta(iso).slice(0, -5) : fechaCorta(iso));
+  const dia = Number(hoy.slice(8));
+  const quince = dia < 15 ? `${hoy.slice(0, 8)}15` : `${primeroDelMesSiguiente(hoy).slice(0, 8)}15`;
+  const lista = [
+    { etiqueta: `Hoy · ${corta(hoy)}`, fecha: hoy },
+    { etiqueta: `Mañana · ${corta(sumarDias(hoy, 1))}`, fecha: sumarDias(hoy, 1) },
+    { etiqueta: corta(quince), fecha: quince },
+    { etiqueta: corta(primeroDelMesSiguiente(hoy)), fecha: primeroDelMesSiguiente(hoy) },
+  ];
+  return lista.filter((f, i) => lista.findIndex((g) => g.fecha === f.fecha) === i);
+}
+
 const fechaCorta = (iso: string) => {
   const [a, m, d] = iso.split('-').map(Number);
   return `${d} ${MESES_CORTOS[m! - 1]} ${a}`;
@@ -308,12 +325,9 @@ const PREGUNTAS: Record<PasoDato, Pregunta> = {
     titulo: 'Fecha de inicio',
     pregunta: '🗓️ ¿Desde qué fecha empieza el contrato?',
     ayuda: 'Escribe la fecha de inicio. Ej.: 15/11/2026 o "15 de noviembre"',
-    otro: '➕ Otra fecha',
-    porFila: 1,
-    opciones: (c) => [
-      { etiqueta: `Hoy, ${fechaALetras(c.hoy)}`, valor: { fecha_inicio: c.hoy } },
-      { etiqueta: fechaALetras(primeroDelMesSiguiente(c.hoy)), valor: { fecha_inicio: primeroDelMesSiguiente(c.hoy) } },
-    ],
+    otro: '📅 Otra fecha',
+    porFila: 2,
+    opciones: (c) => fechasProbables(c.hoy).map(({ etiqueta, fecha }) => ({ etiqueta, valor: { fecha_inicio: fecha } })),
     interpretar: a('fecha_inicio', interpretarFecha),
   },
   ocupantes: {
@@ -656,6 +670,11 @@ export class Asistente {
       default: {
         if (!esPasoDato(e.paso)) return obsoleto();
         const actual = e.paso;
+        // Fecha: "Otra fecha" abre un calendario; sus botones son "cal<AAAA-MM>" (cambiar de mes) y "d<AAAA-MM-DD>".
+        if (actual === 'fecha' && accion === 'otro') return this.calendario(e, this.hoy().slice(0, 7));
+        if (actual === 'fecha' && /^cal\d{4}-\d{2}$/.test(accion)) return this.calendario(e, accion.slice(3));
+        if (actual === 'fecha' && /^d\d{4}-\d{2}-\d{2}$/.test(accion)) return this.aplicar(e, 'fecha', { fecha_inicio: accion.slice(1) });
+        if (actual === 'fecha' && accion === 'opciones') return this.preguntar(e, 'fecha');
         if (accion === 'otro') return this.preguntar(e, actual, [], true);
         if (accion === 'atras') return this.atras(e, actual);
         const i = Number(accion.slice(1));
@@ -890,12 +909,53 @@ export class Asistente {
 
   /** Vuelve a la pregunta anterior (o al documento si es la primera). */
   private atras(e: EstadoAsistente, paso: PasoDato): Salida {
+    // Corrigiendo un dato desde el resumen, "atrás" es volver al resumen sin cambiarlo (el apartamento vuelve
+    // al edificio, por si se quiere elegir otro).
+    if (e.volverAResumen && paso !== 'unidad') return this.resumen(e);
     const i = ORDEN.indexOf(paso);
     if (i === 0) {
       e.paso = 'documento';
       return { tarjeta: this.tarjeta(e, PEDIR_DOCUMENTO) };
     }
     return this.preguntar(e, ORDEN[i - 1]!);
+  }
+
+  /**
+   * Calendario del mes `mes` (AAAA-MM) para elegir la fecha de inicio con un toque, como en un formulario web.
+   * Semanas de lunes a domingo; hoy va entre corchetes y la fecha ya elegida con ✅. También se puede escribir.
+   */
+  private calendario(e: EstadoAsistente, mes: string): Salida {
+    e.paso = 'fecha';
+    const [anio, m] = mes.split('-').map(Number) as [number, number];
+    const iso = (d: number) => `${mes}-${String(d).padStart(2, '0')}`;
+    const otroMes = (delta: number) => {
+      const total = anio * 12 + (m - 1) + delta;
+      return `${Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, '0')}`;
+    };
+    const nada = { texto: '·', data: `fecha:cal${mes}` }; // celdas sin acción: redibujan el mismo mes
+    const diasDelMes = new Date(Date.UTC(anio, m, 0)).getUTCDate();
+    const blancos = (new Date(Date.UTC(anio, m - 1, 1)).getUTCDay() + 6) % 7; // lunes = 0
+
+    const celdas: Boton[] = Array.from({ length: blancos }, () => nada);
+    for (let d = 1; d <= diasDelMes; d++) {
+      const texto = iso(d) === e.datos.fecha_inicio ? `✅${d}` : iso(d) === this.hoy() ? `[${d}]` : String(d);
+      celdas.push({ texto, data: `fecha:d${iso(d)}` });
+    }
+    while (celdas.length % 7) celdas.push(nada);
+
+    const filas: Boton[][] = [
+      [
+        { texto: '◀️', data: `fecha:cal${otroMes(-1)}` },
+        { texto: fechaALetras(`${mes}-01`).replace(/^1 de /, ''), data: `fecha:cal${mes}` },
+        { texto: '▶️', data: `fecha:cal${otroMes(1)}` },
+      ],
+      ['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((texto) => ({ ...nada, texto })),
+    ];
+    for (let i = 0; i < celdas.length; i += 7) filas.push(celdas.slice(i, i + 7));
+    filas.push([{ texto: '⬅️ Atrás', data: 'fecha:opciones' }]); // vuelve a las fechas rápidas
+    return {
+      tarjeta: this.tarjeta(e, `${PREGUNTAS.fecha.pregunta as string}\n📅 Toca el día, o escríbela (ej.: 15/11/2026).`, filas),
+    };
   }
 
   /** `escribir`: el usuario va a escribir el valor; se muestra la ayuda en vez de los botones de opciones. */
@@ -927,7 +987,8 @@ export class Asistente {
     });
     const navegacion: Boton[] = [];
     if (haySugerencias && !escribir) navegacion.push({ texto: p.otro, data: `${paso}:otro` });
-    navegacion.push({ texto: '⬅️ Atrás', data: `${paso}:atras` });
+    const alResumen = e.volverAResumen && paso !== 'unidad';
+    navegacion.push({ texto: alResumen ? '↩️ Volver al resumen' : '⬅️ Atrás', data: `${paso}:atras` });
     filas.push(navegacion);
 
     const pregunta = typeof p.pregunta === 'function' ? p.pregunta(c) : p.pregunta;

@@ -24,6 +24,11 @@ const esquema = z.object({
     .string()
     .optional()
     .transform((v) => (v?.trim() ? Number(v) : undefined)),
+  /** Chat que recibe los avisos de fallas (IA caída, contratos rechazados). Vacío = el de los respaldos. */
+  AVISOS_CHAT_ID: z
+    .string()
+    .optional()
+    .transform((v) => (v?.trim() ? Number(v) : undefined)),
   SOFFICE_PATH: z.string().default('soffice'),
   PLANTILLA_PATH: z.string().default('templates/contrato-arrendamiento.docx'),
 });

@@ -66,6 +66,9 @@ y recibe el contrato listo en PDF y Word.
 - **Avisos de fallas:** si la IA falla 3 veces seguidas, se rechaza un contrato o hay un error al generar, el bot
   avisa por Telegram a `AVISOS_CHAT_ID` (o al chat de respaldos). `/estado` muestra si la IA responde, desde
   cuándo corre el bot, los contratos de hoy y el último respaldo.
+- **Avisos de vencimiento:** a 30 y a 7 días del vencimiento de un contrato sin renovar, el bot avisa a los
+  usuarios autorizados (entre 8 a. m. y 8 p. m.) con botones para 🔁 renovar o ver el inmueble. Cada aviso se
+  envía una sola vez (`data/avisos-vencimiento.json`).
 - **Nada se pierde al reiniciar:** el contrato en curso de cada chat se guarda en `data/sesiones.json` (24 h).
 - **Claude no redacta el contrato:** solo lee la foto y los mensajes libres, con salidas estructuradas. El texto
   del contrato es fijo (`templates/contrato-arrendamiento.docx`) y los valores en letras los calcula
@@ -88,7 +91,7 @@ Otros scripts:
 
 | Script | Qué hace |
 |---|---|
-| `npm test` | Pruebas de validación, letras, interpretación de textos y del flujo completo con botones |
+| `npm test` | Pruebas de validación, letras, interpretación de textos y del flujo completo con botones. GitHub las corre solas (con `npm run typecheck`) en cada PR y en cada cambio en `main` (`.github/workflows/pruebas.yml`) |
 | `npm run ejemplo` | Genera un contrato con datos ficticios en `out/` (sin Telegram ni API) |
 | `npm run plantilla` | Regenera la plantilla Word desde `scripts/build-template.py` (requiere `pip install python-docx`) |
 | `npm run build && npm start` | Compila y ejecuta en producción |
@@ -126,14 +129,15 @@ el segundo falla con "409 Conflict".
 
 ### Respaldos
 
-- Cada 7 días el bot envía por Telegram el archivo `respaldo-contratos-AAAA-MM-DD.json` (edificios,
-  apartamentos, historial de contratos y arrendatarios) a **un solo chat**: `RESPALDO_CHAT_ID`, o el primer ID de
-  `USUARIOS_AUTORIZADOS` si no se define. Solo en ese chat funciona `/respaldo` para pedir uno en cualquier
-  momento. Contiene datos personales: no lo reenvíes.
-- Para recuperar todo en otro PC: instala el bot, copia ese archivo a `data/catalogo.json` y arráncalo.
-- Los PDF y Word de cada contrato se guardan en `data/contratos/` y "📄 Reenviar" manda exactamente esos
-  (los de antes de este cambio se vuelven a generar). No van en el respaldo semanal: también quedaron en el
-  chat cuando se generaron.
+- Una vez al día, si hubo cambios, el bot envía por Telegram `respaldo-contratos-AAAA-MM-DD.zip` a **un solo
+  chat**: `RESPALDO_CHAT_ID`, o el primer ID de `USUARIOS_AUTORIZADOS` si no se define. Solo en ese chat funciona
+  `/respaldo` para pedir uno en cualquier momento. Contiene datos personales: no lo reenvíes.
+- El ZIP trae todo: `catalogo.json` (edificios, apartamentos, historial de contratos y arrendatarios),
+  `contratos/` (el Word y el PDF de cada contrato tal como se enviaron) y `logs/interacciones/` (la bitácora; si
+  el ZIP pasa de 45 MB se deja por fuera y el mensaje lo dice).
+- Para recuperar todo en otro PC: instala el bot, descomprime el ZIP dentro de `data/` y arráncalo.
+- "📄 Reenviar" manda exactamente los archivos guardados en `data/contratos/` (los de contratos anteriores a
+  ese cambio se vuelven a generar).
 
 ### Bitácora de interacciones
 

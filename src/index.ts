@@ -10,6 +10,7 @@ import { compararConAnterior, verificarDatos } from './contract/verificar.js';
 import { ArchivosContratos } from './datos/archivos.js';
 import { Catalogo } from './datos/catalogo.js';
 import { Respaldo } from './datos/respaldo.js';
+import { AvisosVencimiento } from './datos/vencimientos.js';
 import { Asistente, type Mensaje, type Salida } from './flujo/asistente.js';
 import { Inventario } from './flujo/inventario.js';
 import { ExtractorDatos } from './ia/extractor-datos.js';
@@ -48,6 +49,7 @@ const asistente = new Asistente(catalogo, hoy, { extraer: vigilarIA(extractor.ex
 const lectorRegistrado = lectorConBitacora(new LectorDocumento(claude, config.ANTHROPIC_MODEL), bitacora);
 const lector = { leer: vigilarIA(lectorRegistrado.leer.bind(lectorRegistrado), salud) };
 const inventario = new Inventario(catalogo, hoy);
+const avisosVencimiento = await AvisosVencimiento.abrir(join(carpetaDatos, 'avisos-vencimiento.json'));
 // Un reinicio (actualización, recarga de `npm run dev`, corte de luz) no pierde el contrato en curso.
 const sesiones = await ArchivoSessionStore.abrir(join(carpetaDatos, 'sesiones.json'));
 // Todo lo que el bot envía a Telegram queda en la bitácora (texto, botones, message_id).
@@ -164,13 +166,15 @@ async function reenviar(ctx: Context, datos: DatosContrato, id?: string) {
   await ctx.replyWithDocument(new InputFile(contrato.docx, `${nombre}.docx`), contrato.pdf ? {} : { caption });
 }
 
-/** Envía el catálogo a esos chats. Devuelve cuántos lo recibieron. */
+/** Envía el respaldo completo (ZIP) a esos chats. Devuelve cuántos lo recibieron. */
 async function enviarRespaldo(chats: number[], motivo: string): Promise<number> {
   const archivo = await respaldo.archivo(hoy());
   if (!archivo) return 0;
   const caption =
     `💾 Respaldo ${motivo} · ${hoy()}\n\nGuarda este archivo: con él se recupera todo (edificios, apartamentos, ` +
-    'historial de contratos y arrendatarios). Contiene datos personales; no lo reenvíes.';
+    'historial de contratos, arrendatarios, el Word y PDF de cada contrato' +
+    (archivo.sinBitacora ? '; la bitácora no cupo y quedó solo en el PC' : ' y la bitácora') +
+    '). Para recuperarlo, descomprímelo en la carpeta data/ del bot. Contiene datos personales; no lo reenvíes.';
   let enviados = 0;
   for (const chat of chats) {
     try {
@@ -184,15 +188,44 @@ async function enviarRespaldo(chats: number[], motivo: string): Promise<number> 
   return enviados;
 }
 
-/** Respaldo automático: se revisa al arrancar y cada 6 horas; se envía si pasaron 7 días del último. */
+/** Respaldo automático: se revisa al arrancar y cada hora; se envía una vez al día si hubo cambios. */
 async function revisarRespaldo() {
   try {
     if (await respaldo.toca()) {
       if (!chatRespaldo) return;
-      if (await enviarRespaldo([chatRespaldo], 'semanal')) console.log(`[respaldo] Enviado al chat ${chatRespaldo}.`);
+      if (await enviarRespaldo([chatRespaldo], 'diario')) console.log(`[respaldo] Enviado al chat ${chatRespaldo}.`);
     }
   } catch (err) {
     registrarError('respaldo', err);
+  }
+}
+
+const horaBogota = () =>
+  Number(new Intl.DateTimeFormat('en-US', { timeZone: ZONA_HORARIA, hour: 'numeric', hourCycle: 'h23' }).format(new Date()));
+
+/**
+ * Avisos de vencimiento: cada hora se revisan los contratos que vencen sin renovación y, entre 8 a. m. y 8 p. m.,
+ * se avisa a los usuarios autorizados a 30 y a 7 días del vencimiento, con botones para renovar o ver el inmueble.
+ */
+async function revisarVencimientos() {
+  try {
+    const hora = horaBogota();
+    if (hora < 8 || hora >= 20) return;
+    const pendientes = avisosVencimiento.pendientes(inventario.porVencer());
+    if (!pendientes.length) return;
+    const mensaje = inventario.avisoVencimientos(pendientes.map((p) => p.aviso));
+    let enviados = 0;
+    for (const id of config.USUARIOS_AUTORIZADOS) {
+      try {
+        await bot.api.sendMessage(id, mensaje.texto, { reply_markup: teclado(mensaje) });
+        enviados++;
+      } catch (err) {
+        registrarError(`vencimientos: no se pudo avisar a ${id}`, err);
+      }
+    }
+    if (enviados) await avisosVencimiento.marcar(pendientes.flatMap((p) => p.claves));
+  } catch (err) {
+    registrarError('vencimientos', err);
   }
 }
 
@@ -464,7 +497,9 @@ async function revisarClaude() {
 
 void revisarClaude();
 setTimeout(revisarRespaldo, 60_000);
-setInterval(revisarRespaldo, 6 * 60 * 60 * 1000);
+setInterval(revisarRespaldo, 60 * 60 * 1000);
+setTimeout(revisarVencimientos, 90_000);
+setInterval(revisarVencimientos, 60 * 60 * 1000);
 
 void bitacora.registrar({ tipo: 'arranque', modelo: config.ANTHROPIC_MODEL, usuarios: config.USUARIOS_AUTORIZADOS.length });
 console.log('Bot iniciado (long polling)…');

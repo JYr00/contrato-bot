@@ -127,10 +127,14 @@ export interface DocumentoEscrito {
   numero?: string;
 }
 
-/** "Laura Gómez Pérez CC 1.020.345.678" → { nombre, tipo, numero } (lo que se pueda reconocer). */
+/**
+ * "Laura Gómez Pérez CC 1.020.345.678" → { nombre, tipo, numero } (lo que se pueda reconocer).
+ * Las líneas o tramos con otros datos ("paga 600000 pesos", "3 meses") se ignoran: su número no es la cédula.
+ */
 export function interpretarDocumentoEscrito(texto: string): DocumentoEscrito {
   const r: DocumentoEscrito = {};
-  let resto = ` ${texto} `;
+  const propios = texto.split(/[\n,;]+/).filter((s) => !OTRO_DATO.test(normalizar(s)));
+  let resto = ` ${propios.join(' ')} `;
 
   const tipos: [RegExp, DocumentoEscrito['tipo']][] = [
     [/\b(c\.?\s?e\.?|c[eé]dula de extranjer[ií]a)(?=\s|\d|$)/i, 'CE'],
@@ -160,6 +164,10 @@ export function interpretarDocumentoEscrito(texto: string): DocumentoEscrito {
   if (nombre.split(' ').length >= 2) r.nombre = nombre;
   return r;
 }
+
+/** Palabras que nunca van en un nombre y delatan otro dato del contrato (dinero, plazo, contacto…). */
+const OTRO_DATO =
+  /\b(pesos?|mil|millon(es)?|canon|arriendo|arrendamiento|paga|pago|deposito|celular|telefono|cel|correo|mes(es)?|anos?|apto|apartamento|apartaestudio|contrato|empieza|inicia|desde|personas?|ocupantes?)\b|\$/;
 
 /** Suma meses conservando el día (31 ene + 1 mes → 28 feb). */
 export function sumarMeses(fechaIso: string, meses: number): string {

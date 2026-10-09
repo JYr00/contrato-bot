@@ -6,11 +6,13 @@ import {
   MAX_COARRENDATARIOS,
   TIPOS_DOCUMENTO,
   VALORES_POR_DEFECTO,
+  errorDocumento,
   estaCompleto,
   validarParcial,
   type CampoContrato,
   type DatosContrato,
 } from '../contract/schema.js';
+import { compararConAnterior, type Problema } from '../contract/verificar.js';
 import type { Catalogo } from '../datos/catalogo.js';
 import {
   componerDireccion,
@@ -74,6 +76,10 @@ export interface EstadoAsistente {
   /** Valores detrás de los botones del paso actual: el botón "v2" es ofertas[2]. */
   ofertas: Datos[];
   documento?: DocumentoDetectado;
+  /** Contrato que se está renovando: el resumen muestra qué cambia respecto a él. */
+  base?: { datos: DatosContrato; id?: string };
+  /** Nombre o número escrito sin el otro: se espera el dato que falta en el siguiente mensaje. */
+  documentoParcial?: DocumentoDetectado;
   propuesta?: Datos;
   /** Edificio elegido (dirección sin apartamento), mientras se pregunta el apartamento. */
   edificio?: string;
@@ -130,6 +136,8 @@ export function estadoInicial(): EstadoAsistente {
     datos: { ...VALORES_POR_DEFECTO },
     ofertas: [],
     documento: undefined,
+    documentoParcial: undefined,
+    base: undefined,
     propuesta: undefined,
     edificio: undefined,
     reemplazarPrincipal: undefined,
@@ -158,6 +166,9 @@ const fechaCorta = (iso: string) => {
 };
 
 const EJEMPLO_DOCUMENTO = 'Laura Gómez Pérez CC 1020345678';
+const AVISO_IA = '⚠️ No pude usar la IA para entender el mensaje. Escribe un dato a la vez o usa los botones.';
+/** interpretarLibre no pudo consultar a Claude (sin conexión, llave inválida…). */
+const FALLO_IA = 'fallo_ia';
 const PEDIR_DOCUMENTO =
   '📷 Envía una foto de la cédula del arrendatario (por el frente, sin reflejos).\n\n' +
   `También puedes escribir el nombre y el número. Ej.: ${EJEMPLO_DOCUMENTO}`;
@@ -391,6 +402,7 @@ export class Asistente {
     Object.assign(e, estadoInicial());
     const { datos, avisos } = this.renovacion(anterior);
     e.datos = datos;
+    e.base = this.base(anterior);
     return { ...this.resumen(e, avisos), nueva: true };
   }
 
@@ -450,11 +462,40 @@ export class Asistente {
     }
   }
 
+  /**
+   * El contrato no pasó la verificación y no se envió. Si es por un dato, se pide ese dato y luego se vuelve al
+   * resumen; si no, mensaje general (el detalle queda en la bitácora).
+   */
+  problemaAlGenerar(e: EstadoAsistente, problemas: Problema[]): Salida {
+    e.volverAResumen = true;
+    const deDato = problemas.find((p) => (p.tipo === 'dato_faltante' || p.tipo === 'dato_invalido') && p.campo);
+    if (deDato) {
+      const campo = deDato.campo!;
+      const aviso = `⚠️ No envié el contrato: falta o no es válido el dato "${ETIQUETAS[campo]}". ${deDato.detalle}`;
+      const paso = ORDEN.find((p) => p !== 'unidad' && CAMPOS_DE[p].includes(campo));
+      if (paso) return this.preguntar(e, paso, [aviso], true);
+      if (campo === 'coarrendatarios') return this.menuCorregir(e, [aviso]);
+      if (campo.startsWith('arrendatario_')) {
+        e.paso = 'documento';
+        e.reemplazarPrincipal = true;
+        return { tarjeta: this.tarjeta(e, PEDIR_DOCUMENTO, undefined, [aviso]) };
+      }
+    }
+    return this.resumen(e, [
+      '⚠️ No envié el contrato: el documento no pasó la verificación. Quedó registrado; intenta de nuevo y, si se repite, avísale al administrador.',
+    ]);
+  }
+
+  private base(anterior: DatosContrato): EstadoAsistente['base'] {
+    return { datos: { ...anterior }, id: this.catalogo.idDe(anterior) };
+  }
+
   /** Tarjeta final después de enviar el contrato. */
-  generado(e: EstadoAsistente): Mensaje {
+  generado(e: EstadoAsistente, avisos: string[] = []): Mensaje {
     return {
       texto:
         `✅ Contrato generado\n\n${describir(e.datos)}\n\n` +
+        avisos.map((a) => `${a}\n\n`).join('') +
         '🖨️ Imprímelo y fírmenlo ambas partes.\nPara otro contrato, envía la foto de la siguiente cédula 📷',
     };
   }
@@ -463,6 +504,7 @@ export class Asistente {
   async recibirDocumento(e: EstadoAsistente, doc: DocumentoDetectado): Promise<Salida> {
     const nueva = e.paso === 'inicio' || e.paso === 'listo';
     if (nueva) this.iniciar(e);
+    e.documentoParcial = undefined;
 
     // Dos cédulas seguidas (p. ej. un álbum): la anterior, aún sin confirmar, se da por buena.
     const avisos: string[] = [];
@@ -492,35 +534,55 @@ export class Asistente {
       case 'documento':
       case 'confirmar_documento': {
         const nueva = e.paso === 'inicio' || e.paso === 'listo' || e.paso === 'renovar';
+        const avisos: string[] = [];
         if (senalesDeDatos(texto) >= 2) {
           if (nueva) this.iniciar(e);
           const libre = await this.interpretarLibre(e, texto);
-          if (libre) return { ...libre, nueva };
+          if (libre === FALLO_IA) avisos.push(AVISO_IA);
+          else if (libre) return { ...libre, nueva };
         }
+        // Nombre y número pueden llegar en mensajes separados: "Brayan Munar Vásquez", luego "CC 1019141472".
         const doc = interpretarDocumentoEscrito(texto);
-        if (doc.nombre && doc.numero) {
+        const junto = { ...(e.paso === 'documento' ? e.documentoParcial : undefined), ...doc };
+        if (junto.nombre && junto.numero) {
           if (nueva) this.iniciar(e);
-          return { ...(await this.confirmarDocumento(e, { tipo: 'CC', ...doc })), nueva };
+          // Lo escrito reemplaza la lectura pendiente y, como la foto, se confirma antes de usarlo.
+          if (e.paso === 'confirmar_documento') e.documento = undefined;
+          return { ...(await this.recibirDocumento(e, { tipo: 'CC', ...junto })), nueva };
         }
         if (nueva) return this.iniciar(e);
-        return this.actual(e, '🤔 No entendí el nombre y número del documento.');
+        if (e.paso === 'documento' && (doc.nombre || doc.numero)) {
+          e.documentoParcial = junto;
+          const falta = junto.nombre
+            ? `🔢 ¿Cuál es el número de documento de ${junto.nombre}?`
+            : '👤 ¿Cuál es el nombre completo del arrendatario?';
+          return { tarjeta: this.tarjeta(e, falta, undefined, avisos) };
+        }
+        return this.actual(e, [...avisos, '🤔 No entendí el nombre y número del documento.'].join('\n'));
       }
       case 'propuesta':
       case 'resumen':
       case 'corregir':
-      case 'coarrendatarios':
+      case 'coarrendatarios': {
         // Correcciones escritas: "cambia el canon a 800 mil".
-        return (await this.interpretarLibre(e, texto)) ?? this.actual(e, '👇 Usa los botones o escribe qué cambiar.');
+        const libre = await this.interpretarLibre(e, texto);
+        if (libre && libre !== FALLO_IA) return libre;
+        return (
+          this.correccionDocumento(e, texto) ??
+          this.actual(e, libre === FALLO_IA ? AVISO_IA : '👇 Usa los botones o escribe qué cambiar.')
+        );
+      }
       default: {
         const paso = e.paso;
         // Varios datos en un mensaje: se interpretan todos. Uno solo: intérprete local, y Claude si no lo entiende.
         const varios = senalesDeDatos(texto) >= 2;
         const valor = varios ? null : PREGUNTAS[paso].interpretar(texto, this.contexto(e));
         if (valor) return this.aplicar(e, paso, valor);
-        return (
-          (await this.interpretarLibre(e, texto)) ??
-          this.preguntar(e, paso, [`🤔 No entendí "${texto.slice(0, 60)}".`], true)
-        );
+        const libre = await this.interpretarLibre(e, texto);
+        if (libre && libre !== FALLO_IA) return libre;
+        const avisos = [`🤔 No entendí "${texto.slice(0, 60)}".`];
+        if (libre === FALLO_IA) avisos.push(AVISO_IA);
+        return this.preguntar(e, paso, avisos, true);
       }
     }
   }
@@ -538,6 +600,7 @@ export class Asistente {
         if (!anterior) return obsoleto();
         const { datos, avisos } = this.renovacion(anterior);
         e.datos = datos;
+        e.base = this.base(anterior);
         return this.resumen(e, avisos);
       }
 
@@ -553,6 +616,7 @@ export class Asistente {
             if ((e.datos as Record<string, unknown>)[k] === undefined) (e.datos as Record<string, unknown>)[k] = v;
           }
         }
+        else e.base = undefined; // paso a paso: ya no es una renovación del anterior
         e.propuesta = undefined;
         return this.avanzar(e);
 
@@ -610,6 +674,10 @@ export class Asistente {
       arrendatario_numero_documento: doc.numero,
     });
     const problemas = Object.values(errores);
+    const porTipo = guardados.arrendatario_numero_documento
+      ? errorDocumento(guardados.arrendatario_tipo_documento!, guardados.arrendatario_numero_documento)
+      : null;
+    if (porTipo) problemas.push(porTipo);
     if (problemas.length) {
       e.paso = 'documento';
       return { tarjeta: this.tarjeta(e, `Escribe el nombre y número correctos. Ej.: ${EJEMPLO_DOCUMENTO}`, undefined, [`⚠️ ${problemas.join(' ')}`]) };
@@ -630,6 +698,7 @@ export class Asistente {
     if (yaConocido?.ultimoContrato) {
       const renovacion = this.renovacion(yaConocido.ultimoContrato);
       e.propuesta = renovacion.datos;
+      e.base = this.base(yaConocido.ultimoContrato);
       e.paso = 'propuesta';
       return this.mostrarPropuesta(e, renovacion.avisos);
     }
@@ -643,9 +712,9 @@ export class Asistente {
 
   /**
    * Aplica los datos que el extractor encuentre en un mensaje libre. Devuelve null si no hay extractor o no
-   * entendió nada, para que quien llama responda como siempre.
+   * entendió nada, y FALLO_IA si no se pudo consultar, para que quien llama responda como siempre.
    */
-  private async interpretarLibre(e: EstadoAsistente, texto: string): Promise<Salida | null> {
+  private async interpretarLibre(e: EstadoAsistente, texto: string): Promise<Salida | null | typeof FALLO_IA> {
     if (!this.extractor) return null;
     const pregunta = esPasoDato(e.paso) ? PREGUNTAS[e.paso] : undefined;
     let extraidos: DatosExtraidos;
@@ -657,7 +726,7 @@ export class Asistente {
       });
     } catch (err) {
       console.error('[asistente] Error interpretando mensaje libre:', err);
-      return null;
+      return FALLO_IA;
     }
 
     const { apartamento, ...campos } = extraidos;
@@ -707,6 +776,28 @@ export class Asistente {
     if (faltaApartamento) return this.preguntar(e, 'unidad', avisos);
     if (['resumen', 'corregir', 'propuesta'].includes(e.paso)) e.volverAResumen = true;
     return this.avanzar(e, avisos);
+  }
+
+  /**
+   * Cédula escrita desde el resumen ("1019141472" o "Brayan Munar 1019141472"): corrige al arrendatario
+   * principal, con la misma confirmación que una foto. Un número suelto solo cuenta si parece cédula (7 a 10
+   * dígitos y no es un celular), para no confundirlo con un valor.
+   */
+  private correccionDocumento(e: EstadoAsistente, texto: string): Salida | null {
+    if ((e.paso !== 'resumen' && e.paso !== 'corregir') || !e.datos.arrendatario_nombre) return null;
+    const doc = interpretarDocumentoEscrito(texto);
+    if (!doc.numero) return null;
+    const suelto = !doc.nombre && !doc.tipo;
+    if (suelto && (!/^\d{7,10}$/.test(doc.numero) || /^3\d{9}$/.test(doc.numero) || senalesDeDatos(texto))) return null;
+    e.documento = {
+      nombre: doc.nombre ?? e.datos.arrendatario_nombre,
+      tipo: doc.tipo ?? e.datos.arrendatario_tipo_documento ?? 'CC',
+      numero: doc.numero,
+    };
+    e.reemplazarPrincipal = true;
+    e.volverAResumen = true;
+    e.paso = 'confirmar_documento';
+    return this.confirmacionDocumento(e);
   }
 
   /**
@@ -852,6 +943,17 @@ export class Asistente {
     }
     e.paso = 'resumen';
     e.volverAResumen = false;
+    if (e.base) {
+      const cambios = compararConAnterior(e.base.datos, e.datos as DatosContrato);
+      avisos = [
+        ...avisos,
+        cambios.length
+          ? `🔁 Cambios respecto al contrato anterior:\n${cambios.map((c) => `• ${c.etiqueta}: ${c.antes} → ${c.despues}`).join('\n')}`
+          : '🔁 Igual al contrato anterior.',
+      ];
+    }
+    const revisar = this.revisar(e.datos);
+    if (revisar.length) avisos = [...avisos, `🔎 Revisa antes de generar:\n${revisar.map((r) => `• ${r}`).join('\n')}`];
     return {
       tarjeta: {
         texto: this.componer(
@@ -869,6 +971,35 @@ export class Asistente {
         ],
       },
     };
+  }
+
+  /**
+   * Datos válidos pero raros, que suelen ser un error al escribir o al interpretar: se muestran en el resumen
+   * para revisarlos antes de generar (no impiden generar).
+   */
+  private revisar(d: Datos): string[] {
+    const r: string[] = [];
+    const numero = d.arrendatario_numero_documento;
+    if (numero && d.arrendatario_tipo_documento === 'CC' && numero.length < 7) {
+      r.push(`La cédula tiene solo ${numero.length} dígitos (${formatoMiles(Number(numero))}).`);
+    }
+    const anterior = numero ? this.catalogo.arrendatario(numero) : undefined;
+    if (anterior && d.arrendatario_nombre && anterior.nombre !== d.arrendatario_nombre) {
+      r.push(`Esa cédula ya estaba registrada a nombre de ${anterior.nombre}.`);
+    }
+    const ultimo = d.inmueble_direccion ? this.catalogo.inmueble(d.inmueble_direccion)?.ultimoPrecio : undefined;
+    if (d.precio_mensual && ultimo && Math.abs(d.precio_mensual - ultimo) / ultimo > 0.4) {
+      r.push(`El canon (${pesos(d.precio_mensual)}) es muy distinto al anterior de este inmueble (${pesos(ultimo)}).`);
+    }
+    if (d.precio_mensual && d.deposito && d.deposito > 2 * d.precio_mensual) {
+      r.push(`El depósito (${pesos(d.deposito)}) es más del doble del canon.`);
+    }
+    if (d.fecha_inicio) {
+      const hoy = this.hoy();
+      if (d.fecha_inicio < sumarDias(hoy, -30)) r.push(`La fecha de inicio (${fechaALetras(d.fecha_inicio)}) ya pasó hace más de un mes.`);
+      else if (d.fecha_inicio > sumarDias(hoy, 180)) r.push(`La fecha de inicio (${fechaALetras(d.fecha_inicio)}) es en más de 6 meses.`);
+    }
+    return r;
   }
 
   private confirmacionDocumento(e: EstadoAsistente, avisos: string[] = []): Salida {
@@ -948,6 +1079,10 @@ export class Asistente {
       arrendatario_numero_documento: doc.numero,
     });
     const problemas = Object.values(errores);
+    const porTipo = guardados.arrendatario_numero_documento
+      ? errorDocumento(guardados.arrendatario_tipo_documento!, guardados.arrendatario_numero_documento)
+      : null;
+    if (porTipo) problemas.push(porTipo);
     if (problemas.length) return problemas.join(' ');
     return {
       nombre: guardados.arrendatario_nombre!,

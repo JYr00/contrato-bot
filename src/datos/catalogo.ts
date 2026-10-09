@@ -261,6 +261,17 @@ export class Catalogo {
     return masRecientes(this.datos.contratos).slice(0, n);
   }
 
+  /** Id del contrato guardado con estos datos (mismo arrendatario, inmueble y fecha de inicio). */
+  idDe(d: DatosContrato): string | undefined {
+    const k = clave(d.inmueble_direccion);
+    return this.datos.contratos.find(
+      (c) =>
+        c.datos.arrendatario_numero_documento === d.arrendatario_numero_documento &&
+        c.datos.fecha_inicio === d.fecha_inicio &&
+        clave(c.datos.inmueble_direccion) === k,
+    )?.id;
+  }
+
   contrato(id: string): ContratoGuardado | undefined {
     return this.datos.contratos.find((c) => c.id === id);
   }

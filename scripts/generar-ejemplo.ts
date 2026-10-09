@@ -35,6 +35,13 @@ const renderer = await ContractRenderer.desdeArchivo(
 );
 const contrato = await renderer.generar(guardados);
 
+// La misma verificación que hace el bot antes de enviar: útil al editar la plantilla.
+const verificacion = renderer.verificar(guardados, contrato.docx);
+if (!verificacion.ok) {
+  console.error('El contrato de ejemplo no pasó la verificación:', verificacion.problemas);
+  process.exitCode = 1;
+}
+
 await mkdir('out', { recursive: true });
 await writeFile(`out/${contrato.nombreBase}.docx`, contrato.docx);
 if (contrato.pdf) await writeFile(`out/${contrato.nombreBase}.pdf`, contrato.pdf);

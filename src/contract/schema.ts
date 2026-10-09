@@ -30,12 +30,19 @@ const pesos = (campo: string, minimo: number) =>
 /** Texto opcional: '' significa "se dejó en blanco a propósito" (queda una línea para llenar a mano). */
 const opcional = <T extends z.ZodTypeAny>(esquema: T) => z.literal('').or(esquema);
 
+/** Palabras que delatan una frase y no un nombre ("El paga 600000 pesos"). */
+const NO_ES_NOMBRE =
+  /\b(pesos?|mil|millon(es)?|canon|arriendo|arrendamiento|paga|pago|dep[oó]sito|celular|tel[eé]fono|correo|mes(es)?|años?|apto|apartamento|apartaestudio|contrato|n[uú]mero|c[eé]dula|documento|nombre|hola|gracias|favor)\b/i;
+
 const nombrePersona = z
   .string()
   .trim()
   .min(5, 'Debe ser el nombre completo (nombres y apellidos).')
   .max(120)
+  .refine((s) => /^[\p{L}][\p{L}' .-]*$/u.test(s), 'El nombre solo puede tener letras (sin números ni símbolos).')
   .refine((s) => s.split(/\s+/).length >= 2, 'Debe incluir nombres y apellidos.')
+  .refine((s) => s.split(/\s+/).length <= 7, 'El nombre tiene demasiadas palabras; escribe solo nombres y apellidos.')
+  .refine((s) => !NO_ES_NOMBRE.test(s), 'Eso no parece un nombre de persona; escribe nombres y apellidos.')
   .transform((s) => s.replace(/\s+/g, ' ').toUpperCase());
 const tipoDocumento = z.enum(['CC', 'CE', 'PA', 'PPT'], {
   errorMap: () => ({ message: 'Tipo de documento debe ser CC, CE, PA o PPT.' }),
@@ -44,6 +51,17 @@ const numeroDocumento = z
   .string()
   .transform((s) => s.replace(/[.\s-]/g, '').toUpperCase())
   .pipe(z.string().regex(/^[A-Z0-9]{4,15}$/, 'Número de documento inválido.'));
+
+/**
+ * Reglas que dependen del tipo: la cédula de ciudadanía solo tiene dígitos (de 5 a 10, sin empezar en 0).
+ * Devuelve el error o null.
+ */
+export function errorDocumento(tipo: keyof typeof TIPOS_DOCUMENTO, numero: string): string | null {
+  if (tipo === 'CC' && !/^[1-9]\d{4,9}$/.test(numero)) {
+    return 'La cédula de ciudadanía tiene solo dígitos (entre 5 y 10) y no empieza en 0.';
+  }
+  return null;
+}
 
 export const MAX_COARRENDATARIOS = 3;
 

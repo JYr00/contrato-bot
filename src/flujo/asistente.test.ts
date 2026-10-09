@@ -28,6 +28,9 @@ test('primer contrato: sin historial se escribe todo y la tarjeta acumula lo res
 
   assert.equal(a.iniciar(e).nueva, true);
   let s = await a.recibirTexto(e, 'Laura Gómez Pérez CC 1.020.345.678');
+  assert.equal(e.paso, 'confirmar_documento', 'lo escrito se confirma como una foto');
+  assert.match(s.tarjeta.texto, /🪪 Leí este documento:\n\nLaura Gómez Pérez\n/);
+  s = await a.recibirBoton(e, 'confirmar_documento:ok');
   assert.equal(e.paso, 'inmueble', 'sin historial no hay propuesta');
   assert.match(s.tarjeta.texto, /^📄 Contrato nuevo\n\n👤 LAURA GÓMEZ PÉREZ · C\.C\. 1\.020\.345\.678/);
   assert.match(s.tarjeta.texto, /✍️ Escribe la dirección/, 'sin direcciones guardadas se pide escribirla');
@@ -138,6 +141,7 @@ test('opciones guardadas, "otro valor", atrás y botones viejos', async () => {
   const e = estadoInicial();
   a.iniciar(e);
   let s = await a.recibirTexto(e, 'Pedro Ruiz Díaz 80123456');
+  s = await a.recibirBoton(e, 'confirmar_documento:ok');
   s = await a.recibirBoton(e, boton(s, 'paso a paso'));
   assert.deepEqual(
     etiquetas(s),
@@ -213,6 +217,7 @@ test('foto ilegible pide otra foto o escribir los datos', async () => {
   assert.equal(e.paso, 'documento');
   assert.match(s.tarjeta.texto, /la foto está borrosa/);
   await a.recibirTexto(e, 'Laura Gómez Pérez CC 1020345678');
+  await a.recibirBoton(e, 'confirmar_documento:ok');
   assert.equal(e.datos.arrendatario_numero_documento, '1020345678');
 });
 
@@ -222,6 +227,7 @@ test('edificio escrito: se guarda, se pregunta el apartamento y queda como botó
   const e = estadoInicial();
   a.iniciar(e);
   let s = await a.recibirTexto(e, 'Laura Pérez CC 165645678');
+  s = await a.recibirBoton(e, 'confirmar_documento:ok');
   s = await a.recibirTexto(e, 'Carrera 105 i 67 d 31, Bogotá');
   assert.match(s.tarjeta.texto, /💾 Guardé este edificio/);
   assert.equal(e.paso, 'unidad');
@@ -245,6 +251,7 @@ test('edificio escrito: se guarda, se pregunta el apartamento y queda como botó
   // Contrato siguiente: el apartamento usado aparece como opción, y "sin apartamento" sirve para casas.
   a.iniciar(e);
   s = await a.recibirTexto(e, 'Ana Ruiz Díaz 52123456');
+  s = await a.recibirBoton(e, 'confirmar_documento:ok');
   s = await a.recibirBoton(e, boton(s, 'Carrera 105'));
   s = await a.recibirBoton(e, boton(s, 'Sin apartamento'));
   assert.equal(e.datos.inmueble_direccion, 'Carrera 105 i 67 d 31, Bogotá');
@@ -301,6 +308,18 @@ test('/renovar: lista contratos por vencimiento y el elegido va directo al resum
   assert.equal(e.datos.precio_mensual, 1_000_000);
   assert.match(s.tarjeta.texto, /🔁 Renovación del contrato que vence el 14 de octubre de 2026/);
   assert.match(s.tarjeta.texto, /Del 15 de octubre de 2026 al 14 de enero de 2027/);
+  assert.match(
+    s.tarjeta.texto,
+    /🔁 Cambios respecto al contrato anterior:\n• Fecha de inicio: 15 de julio de 2026 → 15 de octubre de 2026$/m,
+    'solo cambia la fecha: el resto queda igual',
+  );
+  assert.ok(e.base?.id, 'se sabe cuál contrato se renueva (para comparar con su Word)');
+
+  // Corregir el canon aparece como cambio.
+  s = await a.recibirBoton(e, 'resumen:corregir');
+  s = await a.recibirBoton(e, boton(s, 'Canon'));
+  s = await a.recibirTexto(e, '1.100.000');
+  assert.match(s.tarjeta.texto, /• Canon \(arriendo mensual\): \$1\.000\.000 → \$1\.100\.000/);
 
   s = await a.recibirBoton(e, boton(s, 'Generar'));
   assert.ok(s.generar);
@@ -343,6 +362,7 @@ test('mensaje libre: varios datos de una vez y solo se pregunta lo que falta', a
   const e = estadoInicial();
   a.iniciar(e);
   await a.recibirTexto(e, 'Laura Gómez Pérez CC 1020345678');
+  await a.recibirBoton(e, 'confirmar_documento:ok');
   assert.equal(e.paso, 'inmueble');
 
   let s = await a.recibirTexto(e, 'apto 501, 750 mil, 200 de depósito, 3 meses desde el 15');
@@ -409,6 +429,7 @@ test('mensaje libre: el apartamento queda en el formato de siempre aunque llegue
   const e = estadoInicial();
   a.iniciar(e);
   await a.recibirTexto(e, 'Laura Gómez Pérez CC 1020345678');
+  await a.recibirBoton(e, 'confirmar_documento:ok');
   await a.recibirTexto(e, 'el de la 105 apto 302 a 1.2 millones por un año');
   assert.equal(e.datos.inmueble_direccion, 'Carrera 105 i 67 d 31 apto 302, Bogotá');
   assert.equal(e.paso, 'deposito');
@@ -577,4 +598,114 @@ test('renovar un contrato guardado antes de los co-arrendatarios', async () => {
   assert.deepEqual(e.datos.coarrendatarios, []);
   s = await a.recibirBoton(e, boton(s, 'Generar'));
   assert.ok(s.generar, 'se puede generar');
+});
+
+test('IA caída: un monto no se toma como cédula, nombre y número llegan por separado y se corrige desde el resumen', async () => {
+  const caido = { extraer: async () => Promise.reject(new Error('401 invalid x-api-key')) };
+  const a = new Asistente(Catalogo.enMemoria(), () => HOY, caido);
+  const e = estadoInicial();
+  a.iniciar(e);
+
+  let s = await a.recibirTexto(e, 'Brayan munar casques');
+  assert.equal(e.paso, 'documento');
+  assert.match(s.tarjeta.texto, /¿Cuál es el número de documento de Brayan munar casques\?/);
+
+  s = await a.recibirTexto(e, 'El paga 600000 pesos');
+  assert.equal(e.paso, 'documento', 'una frase con un monto no es nombre y cédula');
+  assert.equal(e.datos.arrendatario_nombre, undefined);
+
+  s = await a.recibirTexto(e, 'Número de cédula 1019141472');
+  assert.equal(e.paso, 'confirmar_documento', 'se junta con el nombre anterior y se confirma');
+  assert.match(s.tarjeta.texto, /Brayan munar casques\nCédula de ciudadanía: C\.C\. 1\.019\.141\.472/i);
+  await a.recibirBoton(e, 'confirmar_documento:ok');
+  assert.equal(e.datos.arrendatario_nombre, 'BRAYAN MUNAR CASQUES');
+
+  Object.assign(e.datos, {
+    inmueble_direccion: 'Carrera 105 I # 67 d - 31 apto 7',
+    precio_mensual: 600_000,
+    deposito: 200_000,
+    duracion_meses: 3,
+    fecha_inicio: '2026-08-01',
+    numero_ocupantes: 1,
+    arrendatario_celular: '3144397571',
+    arrendatario_correo: '',
+    arrendatario_direccion: 'Carrera 105 I # 67 d - 31 apto 7',
+  });
+  e.paso = 'corregir';
+  s = await a.recibirBoton(e, 'corregir:volver');
+  assert.equal(e.paso, 'resumen');
+  assert.match(s.tarjeta.texto, /🔎 Revisa antes de generar:\n• La fecha de inicio \(1 de agosto de 2026\) ya pasó/);
+
+  // Una cédula escrita sola corrige al arrendatario, con confirmación.
+  s = await a.recibirTexto(e, '1019141400');
+  assert.equal(e.paso, 'confirmar_documento');
+  s = await a.recibirBoton(e, 'confirmar_documento:ok');
+  assert.equal(e.paso, 'resumen');
+  assert.equal(e.datos.arrendatario_numero_documento, '1019141400');
+  assert.equal(e.datos.arrendatario_nombre, 'BRAYAN MUNAR CASQUES');
+
+  // Un número que no parece cédula no la cambia, y avisa que la IA no respondió.
+  s = await a.recibirTexto(e, '600000');
+  assert.equal(e.paso, 'resumen');
+  assert.match(s.tarjeta.texto, /No pude usar la IA/);
+});
+
+test('IA caída: todo en un mensaje, igual saca nombre y cédula', async () => {
+  const caido = { extraer: async () => Promise.reject(new Error('sin conexión')) };
+  const a = new Asistente(Catalogo.enMemoria(), () => HOY, caido);
+  const e = estadoInicial();
+  a.iniciar(e);
+  await a.recibirTexto(e, 'Brayan munar Vásquez\nNúmero de Cédula \n1019141472\nPaga 600000 pesos\nUn canon de arrendamiento de 600000');
+  assert.equal(e.paso, 'confirmar_documento');
+  assert.deepEqual(e.documento, { tipo: 'CC', nombre: 'Brayan munar Vásquez', numero: '1019141472' });
+});
+
+test('nombre y cédula que no son reales se rechazan', async () => {
+  const a = new Asistente(Catalogo.enMemoria(), () => HOY);
+  const e = estadoInicial();
+  await a.recibirDocumento(e, { nombre: 'El paga pesos', numero: '600000' });
+  let s = await a.recibirBoton(e, 'confirmar_documento:ok');
+  assert.equal(e.paso, 'documento');
+  assert.match(s.tarjeta.texto, /no parece un nombre de persona/);
+
+  await a.recibirDocumento(e, { nombre: 'Laura Gómez', numero: 'AB12345' });
+  s = await a.recibirBoton(e, 'confirmar_documento:ok');
+  assert.match(s.tarjeta.texto, /La cédula de ciudadanía tiene solo dígitos/);
+});
+
+test('verificación fallida: pide el dato que falta o da un mensaje general', async () => {
+  const a = new Asistente(Catalogo.enMemoria(), () => HOY);
+  const e = estadoInicial();
+  Object.assign(e.datos, {
+    arrendatario_nombre: 'LAURA GÓMEZ PÉREZ',
+    arrendatario_tipo_documento: 'CC',
+    arrendatario_numero_documento: '1020345678',
+    inmueble_direccion: 'Calle 9 # 8-7 apto 302',
+    precio_mensual: 750_000,
+    deposito: 0,
+    duracion_meses: 6,
+    fecha_inicio: '2026-11-01',
+    numero_ocupantes: 1,
+    arrendatario_celular: '',
+    arrendatario_correo: '',
+    arrendatario_direccion: 'Calle 9 # 8-7 apto 302',
+  });
+  e.paso = 'listo';
+
+  let s = a.problemaAlGenerar(e, [{ tipo: 'dato_faltante', campo: 'fecha_inicio', detalle: 'Falta fecha de inicio.' }]);
+  assert.equal(e.paso, 'fecha');
+  assert.match(s.tarjeta.texto, /⚠️ No envié el contrato: falta o no es válido el dato "Fecha de inicio"/);
+  s = await a.recibirTexto(e, '15/11/2026');
+  assert.equal(e.paso, 'resumen', 'con el dato corregido vuelve al resumen');
+
+  e.paso = 'listo';
+  s = a.problemaAlGenerar(e, [{ tipo: 'dato_invalido', campo: 'arrendatario_nombre', detalle: 'Eso no parece un nombre.' }]);
+  assert.equal(e.paso, 'documento');
+  assert.match(s.tarjeta.texto, /Envía una foto de la cédula/);
+
+  e.paso = 'listo';
+  s = a.problemaAlGenerar(e, [{ tipo: 'texto_modificado', detalle: 'Párrafo 3: …' }]);
+  assert.equal(e.paso, 'resumen');
+  assert.match(s.tarjeta.texto, /el documento no pasó la verificación/);
+  assert.doesNotMatch(s.tarjeta.texto, /Párrafo 3/, 'el detalle técnico va a la bitácora, no al chat');
 });

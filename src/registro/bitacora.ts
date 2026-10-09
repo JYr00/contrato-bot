@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { InputFile, type Context, type MiddlewareFn, type Transformer } from 'grammy';
 
+import type { Cambio, Problema } from '../contract/verificar.js';
 import type { ContextoExtraccion, DatosExtraidos, DocumentoDetectado, Extractor } from '../flujo/asistente.js';
 import type { TipoImagen } from '../ia/lector-documento.js';
 
@@ -16,6 +17,8 @@ import type { TipoImagen } from '../ia/lector-documento.js';
  *                    message_id que devolvió Telegram, para enlazar ediciones y botones posteriores.
  * - "ia":            lo que respondió Claude (lector de cédula, intérprete de mensajes), con su duración.
  * - "estado":        el estado de la conversación después de procesar cada actualización.
+ * - "verificacion":  resultado de revisar cada contrato antes de enviarlo (src/contract/verificar.ts), con el
+ *                    detalle de cada problema y, en renovaciones, qué cambió respecto al anterior.
  * - "error" y "arranque".
  *
  * Contiene datos personales (nombres, cédulas, contratos): queda solo en local, dentro de data/.
@@ -29,6 +32,7 @@ export type Evento =
   | { tipo: 'salida'; metodo: string; payload: unknown; resultado?: unknown; error?: string; ms: number }
   | { tipo: 'ia'; servicio: 'lector' | 'extractor'; entrada?: unknown; resultado?: unknown; error?: string; ms: number }
   | ({ tipo: 'estado'; ms: number } & EstadoConversacion)
+  | { tipo: 'verificacion'; ok: boolean; problemas: Problema[]; cambios?: Cambio[]; avisos?: string[] }
   | { tipo: 'error'; mensaje: string; pila?: string };
 
 /** Estado de la conversación que se guarda después de cada actualización. */

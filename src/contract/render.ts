@@ -10,6 +10,7 @@ import PizZip from 'pizzip';
 
 import { cantidad, fechaALetras, formatoMiles, pesosALetras } from './numero-a-letras.js';
 import { ABREVIATURA_DOCUMENTO, TIPOS_DOCUMENTO, type DatosContrato } from './schema.js';
+import { textoFijoCambiado, verificarContrato, type Verificacion } from './verificar.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -122,6 +123,16 @@ export class ContractRenderer {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  }
+
+  /** Comprueba que el Word generado diga exactamente lo que debe (ver src/contract/verificar.ts). */
+  verificar(datos: DatosContrato, docx: Buffer): Verificacion {
+    return verificarContrato({ plantilla: this.plantilla, docx, datos, arrendador: this.arrendador });
+  }
+
+  /** Párrafos del contrato anterior cuyo texto fijo ya no coincide con la plantilla de hoy. */
+  textoFijoCambiado(anterior: DatosContrato, docxAnterior: Buffer): string[] {
+    return textoFijoCambiado({ plantilla: this.plantilla, docxAnterior, anterior, arrendador: this.arrendador });
   }
 
   async generar(datos: DatosContrato): Promise<ContratoGenerado> {

@@ -6,6 +6,7 @@ import { Bot, InlineKeyboard, InputFile, type Context } from 'grammy';
 import { config } from './config.js';
 import { ContractRenderer, nombreArchivo } from './contract/render.js';
 import type { DatosContrato } from './contract/schema.js';
+import { compararConAnterior, verificarDatos } from './contract/verificar.js';
 import { ArchivosContratos } from './datos/archivos.js';
 import { Catalogo } from './datos/catalogo.js';
 import { Respaldo } from './datos/respaldo.js';
@@ -88,15 +89,47 @@ async function mostrar(ctx: Context, session: Session, salida: Salida) {
   await sesiones.save(session);
 }
 
+/** En una renovación: párrafos fijos del contrato anterior que ya no coinciden con la plantilla de hoy. */
+async function textoFijoDelAnterior(anterior: DatosContrato, id: string): Promise<string[]> {
+  try {
+    const archivo = await archivos.leer(id);
+    return archivo ? renderer.textoFijoCambiado(anterior, archivo.docx) : [];
+  } catch (err) {
+    registrarError(`verificación: no se pudo comparar con el contrato ${id}`, err);
+    return [];
+  }
+}
+
 async function generar(ctx: Context, session: Session, datos: DatosContrato) {
   try {
     await ctx.replyWithChatAction('upload_document');
-    const contrato = await renderer.generar(datos);
+    // Verificación antes de enviar: datos completos y válidos, y el Word dice exactamente lo que debe.
+    const problemasDatos = verificarDatos(datos);
+    const contrato = problemasDatos.length ? undefined : await renderer.generar(datos);
+    const verificacion = contrato ? renderer.verificar(datos, contrato.docx) : { ok: false, problemas: problemasDatos };
+    const base = session.estado.base;
+    const textoFijo = verificacion.ok && base?.id ? await textoFijoDelAnterior(base.datos, base.id) : [];
+    void bitacora.registrar({
+      tipo: 'verificacion',
+      ok: verificacion.ok,
+      problemas: verificacion.problemas,
+      cambios: base && compararConAnterior(base.datos, datos),
+      avisos: textoFijo,
+    });
+    if (!contrato || !verificacion.ok) {
+      console.warn(`[chat ${session.chatId}] Contrato no enviado: no pasó la verificación.`, verificacion.problemas);
+      await editarTarjeta(ctx, session, asistente.problemaAlGenerar(session.estado, verificacion.problemas).tarjeta);
+      return;
+    }
+
     if (contrato.pdf) await ctx.replyWithDocument(new InputFile(contrato.pdf, `${contrato.nombreBase}.pdf`));
     await ctx.replyWithDocument(new InputFile(contrato.docx, `${contrato.nombreBase}.docx`));
     const id = await catalogo.registrarContrato(datos);
     await archivos.guardar(id, contrato).catch((err) => registrarError(`contratos: no se pudo guardar ${id}`, err));
-    await editarTarjeta(ctx, session, asistente.generado(session.estado));
+    const avisos = textoFijo.length
+      ? ['📝 El texto fijo cambió desde el contrato anterior (plantilla o datos del arrendador). Revísalo antes de firmar.']
+      : [];
+    await editarTarjeta(ctx, session, asistente.generado(session.estado, avisos));
     console.log(`[chat ${session.chatId}] Contrato generado: ${contrato.nombreBase}`);
   } catch (err) {
     registrarError(`chat ${session.chatId}: generando el contrato`, err);
@@ -325,6 +358,23 @@ const detener = () => void bitacora.vaciar().finally(() => bot.stop());
 process.once('SIGINT', detener);
 process.once('SIGTERM', detener);
 
+/**
+ * Al arrancar se prueba la llave de Anthropic: si no sirve, el bot no lee fotos ni mensajes largos y nadie lo
+ * nota hasta que algo sale mal. Se avisa en consola, en la bitácora y a los usuarios.
+ */
+async function revisarClaude() {
+  try {
+    await claude.models.retrieve(config.ANTHROPIC_MODEL);
+  } catch (err) {
+    registrarError('arranque: la API de Claude no responde', err);
+    const aviso =
+      '⚠️ El bot arrancó, pero no puede usar Claude (revisa ANTHROPIC_API_KEY y ANTHROPIC_MODEL en el .env).\n\n' +
+      'Mientras tanto no lee fotos de cédulas: escribe el nombre y el número, y un dato por mensaje.';
+    for (const id of config.USUARIOS_AUTORIZADOS) await bot.api.sendMessage(id, aviso).catch(() => undefined);
+  }
+}
+
+void revisarClaude();
 setTimeout(revisarRespaldo, 60_000);
 setInterval(revisarRespaldo, 6 * 60 * 60 * 1000);
 

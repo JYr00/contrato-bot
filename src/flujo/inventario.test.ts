@@ -143,6 +143,7 @@ test('detalle de un apartamento y sus acciones', async () => {
   assert.match(s.tarjeta.texto, /🏠 Carrera 105 i 67 d 31 apto 302, Bogotá/);
   // Con la cédula, sigue con el precio (el inmueble ya está).
   s = await a.recibirTexto(e, 'Juan Paz Soto CC 79123456');
+  s = await a.recibirBoton(e, 'confirmar_documento:ok');
   assert.equal(e.paso, 'precio');
 });
 

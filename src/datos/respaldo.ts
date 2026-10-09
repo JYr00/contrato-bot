@@ -35,6 +35,16 @@ export class Respaldo {
     }
   }
 
+  /** Cuándo se envió el último respaldo (ms), o null si nunca. */
+  async ultimo(): Promise<number | null> {
+    try {
+      const ultimo = Number((await readFile(this.marca, 'utf8')).trim());
+      return Number.isFinite(ultimo) ? ultimo : null;
+    } catch {
+      return null;
+    }
+  }
+
   async marcar(): Promise<void> {
     await writeFile(this.marca, String(this.reloj()));
   }

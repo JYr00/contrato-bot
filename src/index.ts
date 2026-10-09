@@ -15,10 +15,14 @@ import { Inventario } from './flujo/inventario.js';
 import { ExtractorDatos } from './ia/extractor-datos.js';
 import { LectorDocumento, type TipoImagen } from './ia/lector-documento.js';
 import { Bitacora, extractorConBitacora, lectorConBitacora } from './registro/bitacora.js';
-import { InMemorySessionStore, type Session } from './session/store.js';
+import { Salud, vigilarIA } from './registro/salud.js';
+import { AgrupadorMensajes } from './session/agrupador.js';
+import { ArchivoSessionStore, type Session } from './session/store.js';
 
 const ZONA_HORARIA = 'America/Bogota';
 const MAX_IMAGEN = 5 * 1024 * 1024; // límite de la API de Claude por imagen
+/** Mensajes de texto que llegan con menos de esto entre uno y otro se interpretan juntos. */
+const ESPERA_AGRUPAR_MS = 1500;
 
 const renderer = await ContractRenderer.desdeArchivo(
   config.PLANTILLA_PATH,
@@ -32,15 +36,20 @@ const respaldo = new Respaldo(config.CATALOGO_PATH, join(carpetaDatos, 'ultimo-r
 const hoy = () => new Intl.DateTimeFormat('en-CA', { timeZone: ZONA_HORARIA }).format(new Date());
 const bitacora = new Bitacora(join(carpetaDatos, 'logs', 'interacciones'), ZONA_HORARIA);
 const claude = new Anthropic({ apiKey: config.ANTHROPIC_API_KEY });
-const asistente = new Asistente(
-  catalogo,
-  hoy,
-  extractorConBitacora(new ExtractorDatos(claude, config.ANTHROPIC_MODEL), bitacora),
-);
-const lector = lectorConBitacora(new LectorDocumento(claude, config.ANTHROPIC_MODEL), bitacora);
-const inventario = new Inventario(catalogo, hoy);
-const sesiones = new InMemorySessionStore();
 const bot = new Bot(config.TELEGRAM_BOT_TOKEN);
+/** Único chat donde se manejan los respaldos: tienen datos personales de todos los arrendatarios. */
+const chatRespaldo = config.RESPALDO_CHAT_ID ?? config.USUARIOS_AUTORIZADOS[0];
+const chatAvisos = config.AVISOS_CHAT_ID ?? chatRespaldo;
+const salud = new Salud(async (texto) => {
+  if (chatAvisos) await bot.api.sendMessage(chatAvisos, texto);
+});
+const extractor = extractorConBitacora(new ExtractorDatos(claude, config.ANTHROPIC_MODEL), bitacora);
+const asistente = new Asistente(catalogo, hoy, { extraer: vigilarIA(extractor.extraer.bind(extractor), salud) });
+const lectorRegistrado = lectorConBitacora(new LectorDocumento(claude, config.ANTHROPIC_MODEL), bitacora);
+const lector = { leer: vigilarIA(lectorRegistrado.leer.bind(lectorRegistrado), salud) };
+const inventario = new Inventario(catalogo, hoy);
+// Un reinicio (actualización, recarga de `npm run dev`, corte de luz) no pierde el contrato en curso.
+const sesiones = await ArchivoSessionStore.abrir(join(carpetaDatos, 'sesiones.json'));
 // Todo lo que el bot envía a Telegram queda en la bitácora (texto, botones, message_id).
 bot.api.config.use(bitacora.transformador());
 
@@ -118,6 +127,10 @@ async function generar(ctx: Context, session: Session, datos: DatosContrato) {
     });
     if (!contrato || !verificacion.ok) {
       console.warn(`[chat ${session.chatId}] Contrato no enviado: no pasó la verificación.`, verificacion.problemas);
+      salud.contratoRechazado(
+        `${datos.arrendatario_nombre ?? '(sin nombre)'} · ${datos.inmueble_direccion ?? '(sin inmueble)'}\n` +
+          verificacion.problemas.map((p) => `• ${p.tipo}${p.campo ? ` (${p.campo})` : ''}`).join('\n'),
+      );
       await editarTarjeta(ctx, session, asistente.problemaAlGenerar(session.estado, verificacion.problemas).tarjeta);
       return;
     }
@@ -133,6 +146,7 @@ async function generar(ctx: Context, session: Session, datos: DatosContrato) {
     console.log(`[chat ${session.chatId}] Contrato generado: ${contrato.nombreBase}`);
   } catch (err) {
     registrarError(`chat ${session.chatId}: generando el contrato`, err);
+    salud.error('generando un contrato', err);
     session.estado.paso = 'resumen';
     const salida = asistente.actual(session.estado, '⚠️ Tuve un problema generando el contrato. Intenta de nuevo.');
     await editarTarjeta(ctx, session, salida.tarjeta);
@@ -151,9 +165,6 @@ async function reenviar(ctx: Context, datos: DatosContrato, id?: string) {
 }
 
 /** Envía el catálogo a esos chats. Devuelve cuántos lo recibieron. */
-/** Único chat donde se manejan los respaldos: tienen datos personales de todos los arrendatarios. */
-const chatRespaldo = config.RESPALDO_CHAT_ID ?? config.USUARIOS_AUTORIZADOS[0];
-
 async function enviarRespaldo(chats: number[], motivo: string): Promise<number> {
   const archivo = await respaldo.archivo(hoy());
   if (!archivo) return 0;
@@ -210,11 +221,15 @@ async function descargarImagen(ctx: Context): Promise<{ datos: Buffer; tipo: Tip
 
 // Bitácora: cada actualización se registra tal como llega y, al terminar, el estado en que quedó la
 // conversación. Va primero para registrar también los intentos de usuarios no autorizados.
+async function estadoDe(chatId: number) {
+  const s = await sesiones.get(chatId);
+  return { paso: s.estado.paso, datos: s.estado.datos, inventario: s.inventario, tarjetaId: s.tarjetaId };
+}
+
 bot.use(
   bitacora.middleware(async (ctx) => {
     if (!ctx.chat || !ctx.from || !config.USUARIOS_AUTORIZADOS.includes(ctx.from.id)) return null;
-    const s = await sesiones.get(ctx.chat.id);
-    return { paso: s.estado.paso, datos: s.estado.datos, inventario: s.inventario, tarjetaId: s.tarjetaId };
+    return estadoDe(ctx.chat.id);
   }),
 );
 
@@ -227,6 +242,33 @@ bot.use(async (ctx, next) => {
   if (ctx.chat?.type === 'private') {
     await ctx.reply(`🔒 Este bot es privado.\nTu ID de Telegram es ${id}. Para usarlo, agrégalo a USUARIOS_AUTORIZADOS.`);
   }
+});
+
+/**
+ * Mensajes de texto seguidos se interpretan juntos (ver src/session/agrupador.ts). El texto completo se procesa
+ * con el contexto de bitácora del último mensaje, y al terminar se registra el estado en que quedó.
+ */
+const agrupador = new AgrupadorMensajes<Context>(ESPERA_AGRUPAR_MS, async (chatId, texto, ctx) => {
+  await bitacora.conContexto({ update_id: ctx.update.update_id, chat: chatId, usuario: ctx.from?.id }, async () => {
+    const inicio = Date.now();
+    try {
+      const session = await sesiones.get(chatId);
+      await mostrar(ctx, session, await asistente.recibirTexto(session.estado, texto));
+    } catch (err) {
+      registrarError(`chat ${chatId}: procesando mensaje`, err);
+      await ctx.reply('⚠️ Tuve un problema con ese mensaje. Intenta de nuevo.').catch(() => undefined);
+    } finally {
+      void bitacora.registrar({ tipo: 'estado', ...(await estadoDe(chatId)), ms: Date.now() - inicio });
+    }
+  });
+});
+
+// Antes de cualquier otra cosa (botón, foto, comando), se procesa el texto que estuviera esperando: así se
+// respeta el orden en que llegaron y nunca se tocan dos cosas a la vez sobre la misma sesión.
+bot.use(async (ctx, next) => {
+  const texto = ctx.message?.text;
+  if (ctx.chat && !(texto && !texto.startsWith('/'))) await agrupador.vaciar(ctx.chat.id);
+  return next();
 });
 
 bot.command(['start', 'nuevo'], async (ctx) => {
@@ -262,6 +304,51 @@ bot.command('respaldo', async (ctx) => {
   }
   const enviados = await enviarRespaldo([ctx.chat.id], 'manual');
   if (!enviados) await ctx.reply('Todavía no hay datos para respaldar.');
+});
+
+/** Comprueba en vivo que la API de Claude responda (y le cuenta el resultado a la salud). */
+async function probarClaude(): Promise<{ ok: true; ms: number } | { ok: false; error: string }> {
+  const inicio = Date.now();
+  try {
+    await claude.models.retrieve(config.ANTHROPIC_MODEL);
+    salud.exitoIA();
+    return { ok: true, ms: Date.now() - inicio };
+  } catch (err) {
+    salud.falloIA(err);
+    return { ok: false, error: String((err as Error)?.message ?? err) };
+  }
+}
+
+const diaDe = (ms: number) => new Intl.DateTimeFormat('en-CA', { timeZone: ZONA_HORARIA }).format(new Date(ms));
+const fechaHora = (ms: number) =>
+  new Intl.DateTimeFormat('es-CO', { timeZone: ZONA_HORARIA, day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(
+    new Date(ms),
+  );
+function hace(ms: number): string {
+  const min = Math.floor((Date.now() - ms) / 60_000);
+  if (min < 1) return 'hace un momento';
+  if (min < 60) return `hace ${min} min`;
+  if (min < 48 * 60) return `hace ${Math.floor(min / 60)} h`;
+  return `hace ${Math.floor(min / 1440)} días`;
+}
+
+/** Cómo está el bot: si la IA responde (prueba en vivo), desde cuándo corre, contratos y respaldo. */
+bot.command('estado', async (ctx) => {
+  await ctx.replyWithChatAction('typing');
+  const ia = await probarClaude();
+  const generadosHoy = catalogo.contratosRecientes(200).filter((c) => diaDe(c.generado) === hoy()).length;
+  const ultimoRespaldo = await respaldo.ultimo();
+  const lineas = [
+    '🩺 Estado del bot',
+    '',
+    ia.ok ? `🤖 IA: ✅ responde (${ia.ms} ms)` : `🤖 IA: ❌ no responde: ${ia.error.slice(0, 150)}`,
+    `⏱️ Encendido desde el ${fechaHora(salud.arranque)} (${hace(salud.arranque)})`,
+    `📄 Contratos generados hoy: ${generadosHoy}`,
+    `🚫 Rechazados por la verificación desde que encendió: ${salud.rechazados}`,
+    `💾 Último respaldo: ${ultimoRespaldo ? `${fechaHora(ultimoRespaldo)} (${hace(ultimoRespaldo)})` : 'nunca'}`,
+  ];
+  if (ia.ok && salud.ultimoErrorIA) lineas.push(`ℹ️ La IA falló por última vez ${hace(salud.ultimoErrorIA.cuando)}.`);
+  await ctx.reply(lineas.join('\n'));
 });
 
 bot.command('contratos', async (ctx) => {
@@ -319,13 +406,14 @@ bot.on('message:text', async (ctx) => {
   if (deInventario) return void (await responder(ctx, deInventario));
 
   // "muéstrame los apartamentos vacíos" sin contrato en curso.
-  if ((session.estado.paso === 'inicio' || session.estado.paso === 'listo') && !/\d/.test(texto)) {
+  const sinContrato = session.estado.paso === 'inicio' || session.estado.paso === 'listo';
+  if (sinContrato && !agrupador.hayPendiente(ctx.chat.id) && !/\d/.test(texto)) {
     if (PIDE_LIBRES.test(texto)) return void (await responder(ctx, inventario.libres()));
     if (PIDE_INFORME.test(texto)) return void (await responder(ctx, inventario.resumen()));
   }
 
-  await ctx.replyWithChatAction('typing');
-  await mostrar(ctx, session, await asistente.recibirTexto(session.estado, texto));
+  await ctx.replyWithChatAction('typing').catch(() => undefined);
+  agrupador.agregar(ctx.chat.id, texto, ctx);
 });
 
 bot.on('callback_query:data', async (ctx) => {
@@ -348,6 +436,7 @@ await bot.api.setMyCommands([
   { command: 'libres', description: 'Apartamentos libres' },
   { command: 'contratos', description: 'Últimos contratos: ver, reenviar o borrar' },
   { command: 'respaldo', description: 'Recibir un respaldo de todos los datos' },
+  { command: 'estado', description: 'Ver si el bot y la IA están funcionando' },
 ]);
 
 if (!config.USUARIOS_AUTORIZADOS.length) {
@@ -363,10 +452,9 @@ process.once('SIGTERM', detener);
  * nota hasta que algo sale mal. Se avisa en consola, en la bitácora y a los usuarios.
  */
 async function revisarClaude() {
-  try {
-    await claude.models.retrieve(config.ANTHROPIC_MODEL);
-  } catch (err) {
-    registrarError('arranque: la API de Claude no responde', err);
+  const ia = await probarClaude();
+  if (!ia.ok) {
+    registrarError('arranque: la API de Claude no responde', ia.error);
     const aviso =
       '⚠️ El bot arrancó, pero no puede usar Claude (revisa ANTHROPIC_API_KEY y ANTHROPIC_MODEL en el .env).\n\n' +
       'Mientras tanto no lee fotos de cédulas: escribe el nombre y el número, y un dato por mensaje.';

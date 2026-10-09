@@ -24,6 +24,16 @@ export interface EstadoInmueble {
   anterior?: DatosContrato;
 }
 
+/** Contrato vigente que vence pronto y no tiene renovación (ver Inventario.porVencer). */
+export interface PorVencer {
+  i: number;
+  j: number;
+  direccion: string;
+  contrato: DatosContrato;
+  fin: string;
+  dias: number;
+}
+
 /** Lo que el adaptador debe hacer además de mostrar el mensaje. */
 export type Accion =
   /** `id`: contrato guardado, para reenviar sus archivos originales si existen. */
@@ -185,6 +195,44 @@ export class Inventario {
     return {
       texto: texto.filter(Boolean).join('\n\n'),
       botones: [...botones, [{ texto: '↩️ Inmuebles', data: 'inv:inicio' }]],
+    };
+  }
+
+  /**
+   * Contratos vigentes que vencen en `dias` días o menos y todavía no tienen renovación, el más próximo primero.
+   * `i` y `j` son la posición del edificio y del inmueble, para los botones "inv:…".
+   */
+  porVencer(dias = DIAS_POR_VENCER): PorVencer[] {
+    const hoy = this.hoy();
+    const lista: PorVencer[] = [];
+    this.catalogo.edificiosOrdenados().forEach((edificio, i) => {
+      this.catalogo.inmueblesDe(edificio).forEach((direccion, j) => {
+        const e = estadoInmueble(this.catalogo.contratosDe(direccion), hoy);
+        if ((e.tipo === 'por_vencer' || e.tipo === 'ocupado') && !e.siguiente && e.dias! <= dias) {
+          lista.push({ i, j, direccion, contrato: e.contrato!, fin: e.fin!, dias: e.dias! });
+        }
+      });
+    });
+    return lista.sort((a, b) => a.dias - b.dias);
+  }
+
+  /** Aviso de contratos por vencer, con botones para renovar o ver cada inmueble. */
+  avisoVencimientos(lista: PorVencer[]): Mensaje {
+    const cuando = (d: number) => (d === 0 ? 'hoy' : d === 1 ? 'mañana' : `en ${d} días`);
+    const lineas = lista.map(
+      (v) =>
+        `${EMOJI.por_vencer} ${separarUnidad(v.direccion).unidad ? `Apto ${etiquetaUnidad(v.direccion)}` : 'Casa'} · ` +
+        `${separarUnidad(v.direccion).base.split(',')[0]}\n   ${nombreCorto(v.contrato)} · vence el ${fechaCorta(v.fin)} (${cuando(v.dias)})`,
+    );
+    const botones: Boton[][] = lista.map((v) => [
+      { texto: `🔁 Renovar ${etiquetaUnidad(v.direccion)}`, data: `inv:renovar:${v.i}:${v.j}` },
+      { texto: `🏠 Ver ${etiquetaUnidad(v.direccion)}`, data: `inv:u:${v.i}:${v.j}` },
+    ]);
+    return {
+      texto:
+        `📅 ${lista.length === 1 ? 'Contrato por vencer' : 'Contratos por vencer'}\n\n${lineas.join('\n\n')}\n\n` +
+        '🔁 Renovar copia los datos y empieza el día siguiente al vencimiento. Si no se va a renovar, no hagas nada.',
+      botones,
     };
   }
 

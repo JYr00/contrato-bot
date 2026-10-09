@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import type { DatosContrato } from '../contract/schema.js';
 import { Catalogo } from '../datos/catalogo.js';
+import { AvisosVencimiento } from '../datos/vencimientos.js';
 import type { Salida } from './asistente.js';
 import { Asistente, estadoInicial } from './asistente.js';
 import { Inventario, estadoInmueble, type EstadoInventario } from './inventario.js';
@@ -370,4 +371,45 @@ test('✏️ cambiar dirección del edificio mueve apartamentos e historial', as
   const s = a.renovarContrato(e, catalogo.arrendatario('1020345678')!.ultimoContrato!);
   assert.equal(e.datos.inmueble_direccion, 'Carrera 105 I # 67 D - 31 apto 201, Bogotá');
   assert.match(s.tarjeta.texto, /🏠 Carrera 105 I # 67 D - 31 apto 201, Bogotá/);
+});
+
+test('avisos de vencimiento: a 30 y a 7 días, una vez por umbral, sin los ya renovados', async () => {
+  const catalogo = await catalogoDeEjemplo(); // 202 vence el 14 oct; 201 el 31 ene 2027
+  let hoy = '2026-09-20';
+  const inv = new Inventario(catalogo, () => hoy);
+  const avisos = AvisosVencimiento.enMemoria();
+
+  // 24 días antes: entra en el umbral de 30.
+  let pendientes = avisos.pendientes(inv.porVencer());
+  assert.deepEqual(pendientes.map((p) => [p.aviso.direccion, p.aviso.dias]), [[apto('202'), 24]]);
+  const m = inv.avisoVencimientos(pendientes.map((p) => p.aviso));
+  assert.match(m.texto, /📅 Contrato por vencer\n\n🟡 Apto 202 · Carrera 105 i 67 d 31\n {3}PEDRO RUIZ · vence el 14 oct 2026 \(en 24 días\)/);
+  assert.deepEqual(etiquetas(m), [['🔁 Renovar 202', '🏠 Ver 202']]);
+  await avisos.marcar(pendientes.flatMap((p) => p.claves));
+  assert.deepEqual(avisos.pendientes(inv.porVencer()), [], 'no se repite');
+
+  // A 7 días se avisa de nuevo, una sola vez.
+  hoy = '2026-10-07';
+  pendientes = avisos.pendientes(inv.porVencer());
+  assert.equal(pendientes.length, 1);
+  assert.match(inv.avisoVencimientos(pendientes.map((p) => p.aviso)).texto, /\(en 7 días\)/);
+  await avisos.marcar(pendientes.flatMap((p) => p.claves));
+  hoy = '2026-10-10';
+  assert.deepEqual(avisos.pendientes(inv.porVencer()), []);
+
+  // El botón renueva el contrato que vence (mismo flujo que desde el informe).
+  const r = await inv.boton({}, data(m, 'Renovar'));
+  assert.equal(r.accion?.tipo, 'renovar');
+  assert.equal((r.accion as { datos: DatosContrato }).datos.arrendatario_numero_documento, '80123456');
+
+  // Con el bot apagado varias semanas: un solo aviso (el más urgente) y los dos umbrales quedan avisados.
+  const otro = AvisosVencimiento.enMemoria();
+  hoy = '2026-10-12';
+  pendientes = otro.pendientes(inv.porVencer());
+  assert.equal(pendientes.length, 1);
+  assert.equal(pendientes[0]!.claves.length, 2);
+
+  // Ya renovado: no se avisa.
+  await catalogo.registrarContrato(contrato(apto('202'), 'PEDRO RUIZ DÍAZ', '80123456', '2026-10-15', 6));
+  assert.deepEqual(AvisosVencimiento.enMemoria().pendientes(inv.porVencer()), []);
 });

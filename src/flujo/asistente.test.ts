@@ -765,3 +765,98 @@ test('fecha: atajos, calendario por meses y "atrás" que vuelve al resumen al co
   e.paso = 'fecha';
   assert.equal((await a.recibirBoton(e, 'fecha:d2026-13')).obsoleto, true);
 });
+
+/** Contrato guardado como el de "EL PAGA PESOS" del 8 de octubre (apto 7, desde el 10 de octubre, 3 meses). */
+const PAGA_PESOS = {
+  arrendatario_nombre: 'EL PAGA PESOS',
+  arrendatario_tipo_documento: 'CC' as const,
+  arrendatario_numero_documento: '600000',
+  coarrendatarios: [],
+  inmueble_direccion: 'Carrera 105 I # 67 d - 31 apto 7',
+  precio_mensual: 600_000,
+  deposito: 200_000,
+  duracion_meses: 3,
+  fecha_inicio: '2026-10-10',
+  numero_ocupantes: 1,
+  arrendatario_celular: '3144397571',
+  arrendatario_correo: '',
+  arrendatario_direccion: 'Carrera 105 I # 67 d - 31 apto 7',
+  numero_ejemplares: 2,
+};
+
+test('contrato que se cruza con otro del mismo inmueble: avisa y permite reemplazarlo', async () => {
+  const catalogo = Catalogo.enMemoria();
+  const id = await catalogo.registrarContrato(PAGA_PESOS);
+  const a = new Asistente(catalogo, () => HOY);
+  const e = estadoInicial();
+  Object.assign(e.datos, {
+    ...PAGA_PESOS,
+    arrendatario_nombre: 'BRAYAN MUNAR VÁSQUEZ',
+    arrendatario_numero_documento: '1019141472',
+  });
+  e.paso = 'corregir';
+
+  let s = await a.recibirBoton(e, 'corregir:volver');
+  assert.match(
+    s.tarjeta.texto,
+    /⚠️ Ya hay un contrato en este inmueble en esas fechas:\n• EL PAGA PESOS · del 10 oct 2026 al 9 ene 2027\nSi este lo reemplaza/,
+  );
+  assert.deepEqual(etiquetas(s), [['✅ Generar contrato'], ['🔄 Reemplazar a EL PAGA'], ['✏️ Corregir', '❌ Cancelar']]);
+
+  s = await a.recibirBoton(e, boton(s, 'Reemplazar'));
+  assert.deepEqual(e.reemplaza, [id]);
+  assert.doesNotMatch(s.tarjeta.texto, /Ya hay un contrato/);
+  assert.match(s.tarjeta.texto, /🔄 Al generar se borrará del historial:\n• EL PAGA PESOS · del 10 oct 2026/);
+
+  s = await a.recibirBoton(e, boton(s, 'No reemplazar'));
+  assert.equal(e.reemplaza, undefined);
+  assert.match(s.tarjeta.texto, /Ya hay un contrato/);
+
+  s = await a.recibirBoton(e, boton(s, 'Reemplazar'));
+  s = await a.recibirBoton(e, boton(s, 'Generar'));
+  assert.ok(s.generar);
+  assert.deepEqual(e.reemplaza, [id], 'el adaptador borra estos contratos después de guardar el nuevo');
+
+  // Un contrato que empieza cuando el otro termina (renovación) no se cruza.
+  const otro = estadoInicial();
+  Object.assign(otro.datos, { ...PAGA_PESOS, arrendatario_numero_documento: '1019141472', arrendatario_nombre: 'BRAYAN MUNAR VÁSQUEZ', fecha_inicio: '2027-01-10' });
+  otro.paso = 'corregir';
+  assert.doesNotMatch((await a.recibirBoton(otro, 'corregir:volver')).tarjeta.texto, /Ya hay un contrato/);
+});
+
+test('corregir un contrato ya generado: se elige, se cambia lo que esté mal y reemplaza al anterior', async () => {
+  const vacio = new Asistente(Catalogo.enMemoria(), () => HOY);
+  assert.match(vacio.corregirContrato(estadoInicial()).tarjeta.texto, /Todavía no hay contratos generados/);
+
+  const catalogo = Catalogo.enMemoria();
+  const id = await catalogo.registrarContrato(PAGA_PESOS);
+  const a = new Asistente(catalogo, () => HOY);
+  const e = estadoInicial();
+
+  let s = a.corregirContrato(e);
+  assert.equal(s.nueva, true);
+  assert.equal(e.paso, 'elegir_correccion');
+  assert.deepEqual(etiquetas(s), [['EL PAGA · apto 7 · desde 10 oct 2026']]);
+
+  s = await a.recibirBoton(e, boton(s, 'EL PAGA'));
+  assert.equal(e.paso, 'resumen');
+  assert.deepEqual(e.reemplaza, [id]);
+  assert.match(s.tarjeta.texto, /✏️ Corrección del contrato de EL PAGA PESOS \(desde el 10 de octubre de 2026\)/);
+  assert.match(s.tarjeta.texto, /✏️ Sin cambios respecto al contrato que se corrige\./);
+  assert.doesNotMatch(s.tarjeta.texto, /Ya hay un contrato/, 'el contrato que se corrige no cuenta como cruce');
+
+  // Se corrige el arrendatario escribiendo nombre y cédula desde el resumen.
+  s = await a.recibirTexto(e, 'Brayan Munar Vásquez 1019141472');
+  assert.equal(e.paso, 'confirmar_documento');
+  s = await a.recibirBoton(e, 'confirmar_documento:ok');
+  assert.equal(e.paso, 'resumen');
+  assert.match(
+    s.tarjeta.texto,
+    /✏️ Cambios respecto al contrato que se corrige:\n• Arrendatario: EL PAGA PESOS → BRAYAN MUNAR VÁSQUEZ\n• Número de documento: 600000 → 1019141472/,
+  );
+  assert.deepEqual(etiquetas(s), [['✅ Generar contrato'], ['✏️ Corregir', '❌ Cancelar']], 'sin "No reemplazar": es una corrección');
+
+  s = await a.recibirBoton(e, boton(s, 'Generar'));
+  assert.equal(s.generar?.arrendatario_numero_documento, '1019141472');
+  assert.deepEqual(e.reemplaza, [id]);
+});

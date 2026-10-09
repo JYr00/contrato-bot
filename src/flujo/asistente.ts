@@ -50,6 +50,7 @@ const CAMPOS_DE: Record<PasoDato, CampoContrato[]> = {
 export type Paso =
   | 'inicio'
   | 'renovar'
+  | 'elegir_correccion'
   | 'documento'
   | 'confirmar_documento'
   | 'propuesta'
@@ -76,8 +77,10 @@ export interface EstadoAsistente {
   /** Valores detrás de los botones del paso actual: el botón "v2" es ofertas[2]. */
   ofertas: Datos[];
   documento?: DocumentoDetectado;
-  /** Contrato que se está renovando: el resumen muestra qué cambia respecto a él. */
+  /** Contrato que se está renovando o corrigiendo: el resumen muestra qué cambia respecto a él. */
   base?: { datos: DatosContrato; id?: string };
+  /** Contratos guardados que se borran al generar este (el que se corrige, o uno que se cruza y se reemplaza). */
+  reemplaza?: string[];
   /** Nombre o número escrito sin el otro: se espera el dato que falta en el siguiente mensaje. */
   documentoParcial?: DocumentoDetectado;
   propuesta?: Datos;
@@ -138,6 +141,7 @@ export function estadoInicial(): EstadoAsistente {
     documento: undefined,
     documentoParcial: undefined,
     base: undefined,
+    reemplaza: undefined,
     propuesta: undefined,
     edificio: undefined,
     reemplazarPrincipal: undefined,
@@ -181,6 +185,10 @@ const fechaCorta = (iso: string) => {
   const [a, m, d] = iso.split('-').map(Number);
   return `${d} ${MESES_CORTOS[m! - 1]} ${a}`;
 };
+
+/** "EL PAGA PESOS · del 10 oct 2026 al 9 ene 2027" */
+const periodo = (d: DatosContrato) =>
+  `${d.arrendatario_nombre} · del ${fechaCorta(d.fecha_inicio)} al ${fechaCorta(fechaFin(d.fecha_inicio, d.duracion_meses))}`;
 
 const EJEMPLO_DOCUMENTO = 'Laura Gómez Pérez CC 1020345678';
 const AVISO_IA = '⚠️ No pude usar la IA para entender el mensaje. Escribe un dato a la vez o usa los botones.';
@@ -451,6 +459,40 @@ export class Asistente {
     return { tarjeta: { texto: '🔁 Renovar contrato\n\n¿Cuál contrato quieres renovar?', botones }, nueva: true };
   }
 
+  /**
+   * Corregir un contrato ya generado: sin `id`, lista los últimos para elegir; con `id`, abre su resumen con los
+   * mismos datos. Al generar, el contrato corregido reemplaza al anterior (se borra del historial).
+   */
+  corregirContrato(e: EstadoAsistente, id?: string): Salida {
+    Object.assign(e, estadoInicial());
+    const c = id ? this.catalogo.contrato(id) : undefined;
+    if (c) {
+      e.datos = { ...VALORES_POR_DEFECTO, ...c.datos, coarrendatarios: c.datos.coarrendatarios ?? [] };
+      e.base = { datos: { ...c.datos }, id: c.id };
+      e.reemplaza = [c.id];
+      const aviso =
+        `✏️ Corrección del contrato de ${c.datos.arrendatario_nombre} (desde el ${fechaALetras(c.datos.fecha_inicio)}).\n` +
+        'Toca ✏️ Corregir para cambiar lo que esté mal. Al generar, el contrato nuevo reemplaza al anterior.';
+      return { ...this.resumen(e, [aviso]), nueva: true };
+    }
+    const recientes = this.catalogo.contratosRecientes(8);
+    if (!recientes.length) {
+      return { tarjeta: { texto: `✏️ Corregir contrato\n\nTodavía no hay contratos generados.\n\n${PEDIR_DOCUMENTO}` }, nueva: true };
+    }
+    e.paso = 'elegir_correccion';
+    const botones = recientes.map((r) => {
+      const unidad = separarUnidad(r.datos.inmueble_direccion).unidad;
+      const nombre = r.datos.arrendatario_nombre.split(' ').slice(0, 2).join(' ');
+      return [
+        {
+          texto: `${nombre} · ${unidad ? `apto ${unidad}` : r.datos.inmueble_direccion} · desde ${fechaCorta(r.datos.fecha_inicio)}`,
+          data: `elegir_correccion:c${r.id}`,
+        },
+      ];
+    });
+    return { tarjeta: { texto: '✏️ Corregir contrato\n\n¿Cuál contrato quieres corregir?', botones }, nueva: true };
+  }
+
   /** Vuelve a mostrar la tarjeta del paso actual (p. ej. tras un error al generar). */
   actual(e: EstadoAsistente, aviso?: string): Salida {
     const avisos = aviso ? [aviso] : [];
@@ -461,6 +503,8 @@ export class Asistente {
         return { tarjeta: this.tarjeta(e, PEDIR_DOCUMENTO, undefined, avisos) };
       case 'renovar':
         return this.renovar(e);
+      case 'elegir_correccion':
+        return this.corregirContrato(e);
       case 'confirmar_documento':
         return this.confirmacionDocumento(e, avisos);
       case 'propuesta':
@@ -545,9 +589,10 @@ export class Asistente {
       case 'inicio':
       case 'listo':
       case 'renovar':
+      case 'elegir_correccion':
       case 'documento':
       case 'confirmar_documento': {
-        const nueva = e.paso === 'inicio' || e.paso === 'listo' || e.paso === 'renovar';
+        const nueva = e.paso === 'inicio' || e.paso === 'listo' || e.paso === 'renovar' || e.paso === 'elegir_correccion';
         const avisos: string[] = [];
         if (senalesDeDatos(texto) >= 2) {
           if (nueva) this.iniciar(e);
@@ -618,6 +663,12 @@ export class Asistente {
         return this.resumen(e, avisos);
       }
 
+      case 'elegir_correccion': {
+        const id = accion.slice(1);
+        if (!accion.startsWith('c') || !this.catalogo.contrato(id)) return obsoleto();
+        return { ...this.corregirContrato(e, id), nueva: false };
+      }
+
       case 'confirmar_documento':
         if (accion === 'ok' && e.documento) return this.confirmarDocumento(e, e.documento);
         if (accion === 'agregar' && e.documento) return this.agregarCoarrendatario(e, e.documento);
@@ -644,6 +695,14 @@ export class Asistente {
           };
         }
         if (accion === 'corregir') return this.menuCorregir(e);
+        if (accion.startsWith('r') && this.catalogo.contrato(accion.slice(1))) {
+          e.reemplaza = [...new Set([...(e.reemplaza ?? []), accion.slice(1)])];
+          return this.resumen(e);
+        }
+        if (accion === 'noreemplazar') {
+          e.reemplaza = this.esCorreccion(e) ? [e.base!.id!] : undefined;
+          return this.resumen(e);
+        }
         Object.assign(e, estadoInicial());
         return { tarjeta: { texto: '❌ Contrato cancelado.\n\nEnvía otra foto de cédula cuando quieras empezar uno nuevo.' } };
 
@@ -1006,15 +1065,33 @@ export class Asistente {
     e.volverAResumen = false;
     if (e.base) {
       const cambios = compararConAnterior(e.base.datos, e.datos as DatosContrato);
+      const [icono, respecto] = this.esCorreccion(e) ? ['✏️', 'al contrato que se corrige'] : ['🔁', 'al contrato anterior'];
       avisos = [
         ...avisos,
         cambios.length
-          ? `🔁 Cambios respecto al contrato anterior:\n${cambios.map((c) => `• ${c.etiqueta}: ${c.antes} → ${c.despues}`).join('\n')}`
-          : '🔁 Igual al contrato anterior.',
+          ? `${icono} Cambios respecto ${respecto}:\n${cambios.map((c) => `• ${c.etiqueta}: ${c.antes} → ${c.despues}`).join('\n')}`
+          : `${icono} Sin cambios respecto ${respecto}.`,
       ];
+    }
+    const cruces = this.cruces(e);
+    if (cruces.length) {
+      avisos = [
+        ...avisos,
+        `⚠️ Ya hay ${cruces.length === 1 ? 'un contrato' : 'contratos'} en este inmueble en esas fechas:\n` +
+          cruces.map((c) => `• ${periodo(c.datos)}`).join('\n') +
+          '\nSi este lo reemplaza (p. ej. el otro tenía un error), toca 🔄 Reemplazar.',
+      ];
+    }
+    const reemplazados = (e.reemplaza ?? []).map((id) => this.catalogo.contrato(id)).filter((c) => c !== undefined);
+    if (reemplazados.length) {
+      avisos = [...avisos, `🔄 Al generar se borrará del historial:\n${reemplazados.map((c) => `• ${periodo(c.datos)}`).join('\n')}`];
     }
     const revisar = this.revisar(e.datos);
     if (revisar.length) avisos = [...avisos, `🔎 Revisa antes de generar:\n${revisar.map((r) => `• ${r}`).join('\n')}`];
+    const botonesReemplazo: Boton[][] = cruces.map((c) => [
+      { texto: `🔄 Reemplazar a ${c.datos.arrendatario_nombre.split(' ').slice(0, 2).join(' ')}`, data: `resumen:r${c.id}` },
+    ]);
+    if (reemplazados.length && !this.esCorreccion(e)) botonesReemplazo.push([{ texto: '↩️ No reemplazar', data: 'resumen:noreemplazar' }]);
     return {
       tarjeta: {
         texto: this.componer(
@@ -1025,6 +1102,7 @@ export class Asistente {
         ),
         botones: [
           [{ texto: '✅ Generar contrato', data: 'resumen:generar' }],
+          ...botonesReemplazo,
           [
             { texto: '✏️ Corregir', data: 'resumen:corregir' },
             { texto: '❌ Cancelar', data: 'resumen:cancelar' },
@@ -1032,6 +1110,22 @@ export class Asistente {
         ],
       },
     };
+  }
+
+  /** Se está corrigiendo un contrato ya generado (no renovando). */
+  private esCorreccion(e: EstadoAsistente): boolean {
+    return !!e.base?.id && !!e.reemplaza?.includes(e.base.id);
+  }
+
+  /** Contratos guardados del mismo inmueble cuyas fechas se cruzan con las de este (salvo los que reemplaza). */
+  private cruces(e: EstadoAsistente) {
+    const d = e.datos;
+    if (!d.inmueble_direccion || !d.fecha_inicio || !d.duracion_meses) return [];
+    const fin = fechaFin(d.fecha_inicio, d.duracion_meses);
+    return this.catalogo
+      .contratosGuardadosDe(d.inmueble_direccion)
+      .filter((c) => !e.reemplaza?.includes(c.id))
+      .filter((c) => c.datos.fecha_inicio <= fin && d.fecha_inicio! <= fechaFin(c.datos.fecha_inicio, c.datos.duracion_meses));
   }
 
   /**

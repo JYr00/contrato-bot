@@ -297,6 +297,7 @@ test('el menú normal no tiene botones de agregar, corregir ni borrar: están en
     ['↩️ Volver'],
   ]);
   assert.deepEqual(etiquetas((await inv.boton(estado, data(inv.detalleContrato(id), 'Ajustes'))).mensaje), [
+    ['✏️ Corregir contrato'],
     ['🗑 Borrar contrato'],
     ['↩️ Volver'],
   ]);

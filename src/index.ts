@@ -4,6 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { Bot, InlineKeyboard, InputFile, type Context } from 'grammy';
 
 import { config } from './config.js';
+import { fechaALetras } from './contract/numero-a-letras.js';
 import { ContractRenderer, nombreArchivo } from './contract/render.js';
 import type { DatosContrato } from './contract/schema.js';
 import { compararConAnterior, verificarDatos } from './contract/verificar.js';
@@ -144,6 +145,13 @@ async function generar(ctx: Context, session: Session, datos: DatosContrato) {
     const avisos = textoFijo.length
       ? ['📝 El texto fijo cambió desde el contrato anterior (plantilla o datos del arrendador). Revísalo antes de firmar.']
       : [];
+    // Corrección o reemplazo: el contrato anterior sale del historial (después de guardar el nuevo).
+    for (const anterior of session.estado.reemplaza ?? []) {
+      const borrado = await catalogo.borrarContrato(anterior);
+      if (!borrado) continue;
+      await archivos.borrar(anterior).catch((err) => registrarError(`contratos: no se pudieron borrar los archivos de ${anterior}`, err));
+      avisos.push(`🗑 Borré del historial el contrato anterior de ${borrado.datos.arrendatario_nombre} (desde el ${fechaALetras(borrado.datos.fecha_inicio)}).`);
+    }
     await editarTarjeta(ctx, session, asistente.generado(session.estado, avisos));
     console.log(`[chat ${session.chatId}] Contrato generado: ${contrato.nombreBase}`);
   } catch (err) {
@@ -234,6 +242,8 @@ const responder = (ctx: Context, m: Mensaje) => ctx.reply(m.texto, { reply_marku
 // Frases para pedir el informe sin comando (solo sin números, para no confundirlas con datos de un contrato).
 const PIDE_LIBRES = /\b(vac[ií]os?|libres?|desocupad[oa]s?|disponibles?)\b/i;
 const PIDE_INFORME = /\b(inmuebles?|apartamentos?|aptos?|informe|reporte|ocupad[oa]s?|contratos)\b/i;
+// "Quiero corregirlo", "me equivoqué en el contrato": corregir uno ya generado.
+const PIDE_CORREGIR = /\b(corregir(lo|la)?|corrijo|correcci[oó]n|arreglar(lo|la)?|modificar(lo|la)?|me equivoqu[eé]|qued[oó] mal|est[aá] mal)\b/i;
 
 /** Descarga la imagen del mensaje (foto o archivo de imagen) desde Telegram. */
 async function descargarImagen(ctx: Context): Promise<{ datos: Buffer; tipo: TipoImagen } | string> {
@@ -307,6 +317,11 @@ bot.use(async (ctx, next) => {
 bot.command(['start', 'nuevo'], async (ctx) => {
   const session = await sesiones.get(ctx.chat.id);
   await mostrar(ctx, session, asistente.iniciar(session.estado));
+});
+
+bot.command('corregir', async (ctx) => {
+  const session = await sesiones.get(ctx.chat.id);
+  await mostrar(ctx, session, asistente.corregirContrato(session.estado));
 });
 
 bot.command('renovar', async (ctx) => {
@@ -410,6 +425,7 @@ bot.callbackQuery(/^inv:/, async (ctx) => {
   if (accion?.tipo === 'borrado') await archivos.borrar(accion.id);
   if (accion?.tipo === 'renovar') await mostrar(ctx, session, asistente.renovarContrato(session.estado, accion.datos));
   if (accion?.tipo === 'nuevo') await mostrar(ctx, session, asistente.nuevoEn(session.estado, accion.direccion));
+  if (accion?.tipo === 'corregir') await mostrar(ctx, session, asistente.corregirContrato(session.estado, accion.id));
   await sesiones.save(session);
 });
 
@@ -441,6 +457,7 @@ bot.on('message:text', async (ctx) => {
   // "muéstrame los apartamentos vacíos" sin contrato en curso.
   const sinContrato = session.estado.paso === 'inicio' || session.estado.paso === 'listo';
   if (sinContrato && !agrupador.hayPendiente(ctx.chat.id) && !/\d/.test(texto)) {
+    if (PIDE_CORREGIR.test(texto)) return void (await mostrar(ctx, session, asistente.corregirContrato(session.estado)));
     if (PIDE_LIBRES.test(texto)) return void (await responder(ctx, inventario.libres()));
     if (PIDE_INFORME.test(texto)) return void (await responder(ctx, inventario.resumen()));
   }
@@ -464,6 +481,7 @@ bot.catch((err) => console.error('Error no controlado:', err.error));
 await bot.api.setMyCommands([
   { command: 'nuevo', description: 'Crear un contrato nuevo' },
   { command: 'renovar', description: 'Renovar un contrato anterior' },
+  { command: 'corregir', description: 'Corregir un contrato ya generado' },
   { command: 'cancelar', description: 'Descartar el contrato en curso' },
   { command: 'inmuebles', description: 'Informe de edificios y apartamentos' },
   { command: 'libres', description: 'Apartamentos libres' },

@@ -66,6 +66,11 @@ y recibe el contrato listo en PDF y Word.
 - **Avisos de fallas:** si la IA falla 3 veces seguidas, se rechaza un contrato o hay un error al generar, el bot
   avisa por Telegram a `AVISOS_CHAT_ID` (o al chat de respaldos). `/estado` muestra si la IA responde, desde
   cuándo corre el bot, los contratos de hoy y el último respaldo.
+- **Corregir un contrato ya generado:** `/corregir` (o escribir "quiero corregirlo", "me equivoqué"…, o
+  ⚙️ Ajustes del contrato → ✏️ Corregir contrato) abre su resumen con los mismos datos y muestra qué se va
+  cambiando. Al generar, el corregido reemplaza al anterior: el anterior sale del historial y se borran sus archivos.
+- **Contratos que se cruzan:** si ya hay otro contrato en el mismo inmueble con fechas que se cruzan, el resumen
+  lo avisa y ofrece 🔄 Reemplazarlo (se borra al generar el nuevo).
 - **Avisos de vencimiento:** a 30 y a 7 días del vencimiento de un contrato sin renovar, el bot avisa a los
   usuarios autorizados (entre 8 a. m. y 8 p. m.) con botones para 🔁 renovar o ver el inmueble. Cada aviso se
   envía una sola vez (`data/avisos-vencimiento.json`).
@@ -85,7 +90,7 @@ cp .env.example .env      # completa TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY y USU
 npm run dev               # long polling, recarga al guardar
 ```
 
-Comandos del bot: `/nuevo`, `/renovar`, `/inmuebles` (también `/direcciones`), `/libres`, `/contratos`, `/respaldo`, `/estado` y `/cancelar`. También basta con enviar la foto de una cédula para empezar.
+Comandos del bot: `/nuevo`, `/renovar`, `/inmuebles` (también `/direcciones`), `/libres`, `/contratos`, `/corregir`, `/respaldo`, `/estado` y `/cancelar`. También basta con enviar la foto de una cédula para empezar.
 
 Otros scripts:
 

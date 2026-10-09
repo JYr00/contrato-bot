@@ -41,7 +41,9 @@ export type Accion =
   /** Se borró un contrato: el adaptador borra también sus archivos guardados. */
   | { tipo: 'borrado'; id: string }
   | { tipo: 'renovar'; datos: DatosContrato }
-  | { tipo: 'nuevo'; direccion: string };
+  | { tipo: 'nuevo'; direccion: string }
+  /** Corregir un contrato ya generado: el asistente abre su resumen y, al generar, lo reemplaza. */
+  | { tipo: 'corregir'; id: string };
 
 export interface RespuestaInventario {
   mensaje: Mensaje;
@@ -394,7 +396,11 @@ Toca uno para ver el detalle o reenviarlo.`,
     const d = c.datos;
     return {
       texto: `⚙️ Ajustes del contrato de ${d.arrendatario_nombre}\n${d.inmueble_direccion} · desde ${fechaALetras(d.fecha_inicio)}`,
-      botones: [[{ texto: '🗑 Borrar contrato', data: `inv:cdel:${id}` }], [{ texto: '↩️ Volver', data: `inv:c:${id}` }]],
+      botones: [
+        [{ texto: '✏️ Corregir contrato', data: `inv:ccorr:${id}` }],
+        [{ texto: '🗑 Borrar contrato', data: `inv:cdel:${id}` }],
+        [{ texto: '↩️ Volver', data: `inv:c:${id}` }],
+      ],
     };
   }
 
@@ -508,6 +514,9 @@ Toca uno para ver el detalle o reenviarlo.`,
         return { mensaje: this.contratosDeUnidad(i, j) };
       case 'c':
         return { mensaje: this.detalleContrato(a!) };
+      case 'ccorr':
+        if (!this.catalogo.contrato(a!)) return { mensaje: this.contratos('Ese contrato ya no existe.') };
+        return { mensaje: this.detalleContrato(a!), accion: { tipo: 'corregir', id: a! } };
       case 'creenv': {
         const c = this.catalogo.contrato(a!);
         if (!c) return { mensaje: this.contratos('Ese contrato ya no existe.') };
